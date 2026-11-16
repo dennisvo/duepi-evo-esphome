@@ -75,13 +75,13 @@ Verify these details for your controller and cable before connecting.
 For example hardware setups, see
 [mvroosmalen's ESPHome-Duepi repository](https://github.com/mvroosmalen1970/ESPHome-Duepi).
 
-**UART logic levels are not yet confirmed.** Users of that project report direct
-connections to ESP boards, but those reports do not establish electrical
-compatibility for every controller. ESP32 GPIO uses 3.3 V logic and is not 5 V
-tolerant. The stove's reportedly 5 V UART output needs checking before connection
-because it could damage an ESP32 input. A suitable logic-level shifter may be
-required; whether direct connection is safe remains to be confirmed. Start with
-read-only operation.
+**The tested stove's UART logic levels have been confirmed as 5 V with a
+multimeter.** Although users report working setups with direct connections
+between ESP boards and pellet stoves, those reports do not establish
+electrical safety. ESP32 GPIO expects 3.3 V logic and is not 5 V tolerant, so a
+suitable 5 V / 3.3 V UART logic-level shifter is advisable to avoid damaging the
+ESP32 input. Verify the levels and wiring on your particular controller before
+connecting, and start with read-only operation.
 
 ### Installation
 
