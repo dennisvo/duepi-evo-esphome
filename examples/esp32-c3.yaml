@@ -1,0 +1,149 @@
+esphome:
+  name: duepi-c3
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: esp-idf
+
+external_components:
+  - source: github://dennisvo/duepi-evo-esphome@main
+    components: [duepi]
+    refresh: 0s
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Duepi Fallback"
+    password: !secret ap_password
+
+# Encrypts Home Assistant-to-device API communication and OTA updates.
+# OTA updates share the device encryption key in this example.
+# More info: https://esphome.io/components/api/#configuration-variables
+# https://esphome.io/components/ota/esphome/#encryption
+api:
+  encryption:
+    key: !secret device_encryption_key
+
+ota:
+  - platform: esphome
+    encryption:
+
+# View logs over the network; baud_rate: 0 keeps logs off the stove UART.
+# Duepi messages use the duepi tag. INFO shows status changes and write outcomes.
+# Set level below to DEBUG for transactions or VERBOSE for frame data.
+# Rebuild and install after changing the level; per-tag settings cannot exceed it.
+# VERBOSE may expose installer/custom data; review logs before sharing.
+logger:
+  baud_rate: 0
+  level: INFO
+
+uart:
+  id: stove_uart
+  # Adjust these UART pins to match your board and hardware wiring.
+  # These values are compile-only placeholders, not verified stove connections.
+  tx_pin: GPIO21
+  rx_pin: GPIO20
+  baud_rate: 115200
+
+duepi:
+  id: stove
+  uart_id: stove_uart
+  # Enable normal stove controls only after checking telemetry and wiring.
+  enable_writes: false
+  enable_reset: false
+  # true includes installer/custom/raw support; false excludes it from firmware.
+  # Requires enable_writes: true. Installer Access starts off in Home Assistant.
+  enable_installer: false
+  firmware_profile: auto
+  min_temperature: 10
+  max_temperature: 25
+  init_command: false
+  update_interval: 10s
+  stale_after: 45s
+
+switch:
+  - platform: duepi
+    duepi_id: stove
+    kind: initialization
+    name: Initialization Compatibility
+    entity_category: config
+
+number:
+  - platform: duepi
+    duepi_id: stove
+    name: Last Requested Controller Level (Unverified)
+  - platform: duepi
+    duepi_id: stove
+    kind: min_temperature
+    name: Minimum Target Temperature
+    mode: box
+  - platform: duepi
+    duepi_id: stove
+    kind: max_temperature
+    name: Maximum Target Temperature
+    mode: box
+
+sensor:
+  - platform: duepi
+    duepi_id: stove
+    room_temperature:
+      name: Room Temperature
+    target_temperature:
+      name: Target Temperature
+    phase_code:
+      name: Phase Code
+    alarm_code:
+      name: Alarm Code
+    d3000:
+      name: Power Level
+    d4000:
+      name: Pellet Feed Level
+    flue_temperature:
+      name: Flue Temperature
+    exhaust_speed:
+      name: Exhaust Speed
+    pcb_temperature:
+      name: PCB Temperature
+    inputs_code:
+      name: Inputs Code
+    total_runtime_counter:
+      name: Lifetime Runtime Counter
+    service_runtime_counter:
+      name: Service Runtime Counter
+
+text_sensor:
+  - platform: duepi
+    duepi_id: stove
+    phase:
+      name: Stove Phase
+    firmware:
+      name: Controller Firmware
+    board_type:
+      name: Controller Board Type
+    alarm:
+      name: Stove Alarm
+    transaction:
+      name: Read Result
+    last_response:
+      name: Last Accepted Response Uptime
+    target_source:
+      name: Target Temperature Source
+      entity_category: diagnostic
+
+binary_sensor:
+  - platform: duepi
+    duepi_id: stove
+    communication:
+      name: Stove Communication
+
+climate:
+  - platform: duepi
+    duepi_id: stove
+    name: Stove
+
+button:
+  - platform: duepi
+    duepi_id: stove
+    name: Reset Stove Alarm

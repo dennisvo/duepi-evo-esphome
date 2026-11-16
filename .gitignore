@@ -1,4 +1,8 @@
 # Byte-compiled / optimized / DLL files
+/tmp/
+/.validation-*/
+**/.esphome/
+**/secrets.yaml
 __pycache__/
 *.py[codz]
 *$py.class

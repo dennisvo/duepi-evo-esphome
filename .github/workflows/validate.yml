@@ -1,0 +1,44 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      compile_firmware:
+        description: Compile read-only, controls and installer variants without upload
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    env:
+      PIP_INDEX_URL: ${{ secrets.PYTHON_PACKAGE_INDEX_URL }}
+      PIP_EXTRA_INDEX_URL: ''
+      PIP_CONFIG_FILE: NUL
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Require authenticated compliant package feed
+        shell: python
+        run: |
+          import os
+          from urllib.parse import urlparse
+          url = urlparse(os.environ.get('PIP_INDEX_URL', ''))
+          host = url.hostname or ''
+          if url.scheme != 'https' or not (host == 'pkgs.dev.azure.com' or host.endswith('.pkgs.visualstudio.com')):
+              raise SystemExit('Configure PYTHON_PACKAGE_INDEX_URL with an authenticated compliant Azure Artifacts PyPI feed; no public fallback is permitted.')
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pip check
+      - run: python tests/run_host_tests.py
+      - run: python tests/test_config.py
+      - run: python tests/validate_examples.py config
+      - if: ${{ github.event_name == 'workflow_dispatch' && inputs.compile_firmware }}
+        run: python tests/validate_examples.py compile
