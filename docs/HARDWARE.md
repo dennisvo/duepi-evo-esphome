@@ -20,9 +20,9 @@ from the table order.
 | Red | **TX ttl** | 3 |
 | Purple / Violet | **+5V** | 4 |
 
-![External connector pinout](images/wifi-connector.png)
-
-
+| External connector pinout | Connector photo |
+| --- | --- |
+| ![External connector pinout](images/wifi-connector.png) | ![Connector pinout photo](images/connector-pinout-photo-cropped.png) |
 
 ## UART Connection
 
