@@ -381,89 +381,56 @@ readback rules and response-correlation limits.
 
 ## Installer and Custom Commands
 
-Installer support includes parameter reads/writes and custom/raw
-commands. Enable it with `enable_installer: true`
-under `duepi:`, then rebuild. Without this opt-in none of the advanced
-entities, actions or command implementation are included. When included, all
-advanced operations share **Installer Access**, which is off after every boot;
-access is never restored. The parameter selectors, read/write buttons and result
-sensors are generated automatically.
-Native API actions are also registered automatically when `api:` is configured.
+Set `enable_writes: true` and `enable_installer: true` under `duepi:`, then
+rebuild and install. The installer controls appear under Configuration in Home
+Assistant. All installer and custom operations require **Installer Access** on
+and fresh stove readings. Access is off after every reboot.
 
-The generated Configuration entities sort alphabetically in this order:
+### Read or Write a Parameter
 
-- **Installer Access**
-- **Installer Input: Parameter Number**
-- **Installer Input: Value to Write**
-- **Installer Operation: Read**
-- **Installer Operation: Write**
-- **Installer Result**
+1. Turn on **Installer Access**.
+2. Enter the documented serial address (0..255) in
+	**Installer Input: Parameter Number**, then press **Installer Operation: Read**.
+	The raw value appears in **Installer Result**.
+3. To change it, first record the original value and ensure the stove is off.
+	Enter the raw value (0..255) in **Installer Input: Value to Write**, then press
+	**Installer Operation: Write**.
+4. Check **Installer Result** for the readback outcome. Wait for each operation
+	to finish before starting another; stop on failure or timeout.
+5. Turn off **Installer Access** when finished.
 
-To inspect one parameter on demand in Home Assistant, enable **Installer Access**,
-enter its numeric address (0..255) in **Installer Input: Parameter Number**, then press
-**Installer Operation: Read**. The raw returned value appears in **Installer
-Result**, alongside the parameter number. Changing the selection alone sends
-nothing; parameters are not scanned or periodically polled. No stove profile is
-needed for a read, but Installer Access must be on for both reads
-and writes. Confirm the address mapping in your controller documentation rather
-than assuming a printed PR label is the serial address.
+Changing an input alone sends nothing. The value input starts at zero, which is
+not a reading or recommended setting. Printed PR numbers are not verified serial
+addresses; use controller-specific documentation for addresses, units and ranges.
 
-For multiple parameter reads, submit one at a time and wait for a fresh
-**Installer Result** before continuing. Stop on failure or timeout, avoid other
-installer operations while a read is pending, and turn Installer Access off when
-finished. Serial addresses are not a verified mapping to printed PR numbers or
-their units. Cancelling a caller does not cancel an already submitted request.
+A matching readback confirms only the returned byte, not that the setting is
+appropriate. Failed readback leaves the write unverified; writes are not retried
+automatically. Turning access off cannot undo an already transmitted write and
+cancels pending installer work, including readback.
 
-To write, first read the documented parameter and record its original value.
-Enter the intended raw byte (0..255) in **Installer Input: Value to Write**, press
-**Installer Operation: Write**, then check **Installer Result**. The write uses
-the currently selected parameter and proposed value. Editing
-either field alone sends nothing. The proposed value starts at zero as a local
-placeholder, not a recommended setting or an observed value, and is not restored
-after reboot. Writes require Installer Access on, fresh observations
-and the stove observed off. An ACK triggers a parameter-specific
-readback: matching, mismatching and unverified outcomes remain distinct. A match
-only verifies the returned byte, not physical operation or correct configuration.
-No parameter meanings, recommended values or automated tuning are supplied.
+### Automation and Custom Commands
 
-If readback fails or is cancelled, the write remains unverified and is never
-replayed. Fresh control observations are required before further commands.
-Disabling Installer Access cancels pending advanced work, including readback,
-but cannot undo an already transmitted write. It does not disable normal controls.
-
-For custom use, enable Installer Access and invoke the relevant send action.
-Authorization is automatic for that request and rechecked immediately before
-transmission. Normal custom input is exactly four hexadecimal command
-characters; raw input is exactly six uppercase alphanumeric payload characters.
-The hub supplies framing/checksum. **Custom commands bypass normal firmware,
-alarm, phase and installer parameter semantics**, including the off-state check,
-**except for ordinary-shutdown and pending-Off protection**, which cannot be bypassed.
-Treat either custom interface as unrestricted controller access, not safe reads.
-Encrypted API access is device-wide, not per-action authorization; restrict who
-can call it or omit these features entirely.
-
-Custom Response shows `Pending` when a new command is queued or sent and
-`Unavailable` if it is rejected, cancelled or times out, including rejection for
-invalid input or disabled access. A valid reply replaces that marker with its
-hexadecimal payload. An older request's completion cannot overwrite a newer
-attempt's response diagnostic. These replies remain diagnostic,
-not verification of physical operation.
-
-| Automation action | Fields besides `id: stove` | Required configuration/runtime state |
+| YAML action | Fields besides `id: stove` | Additional requirement |
 | --- | --- | --- |
-| `duepi.installer_read` | `parameter` integer 0..255 | `enable_installer`, Installer Access on, fresh observations |
-| `duepi.installer_write` | `parameter`, `value` integers 0..255 | Same, observed off; authorization automatic |
-| `duepi.send_command` | `command` four hex characters | Same access/freshness requirements; authorization automatic, off not required |
-| `duepi.send_raw` | `command` six uppercase alphanumeric characters | Same as `duepi.send_command` |
+| `duepi.installer_read` | `parameter` integer 0..255 | None |
+| `duepi.installer_write` | `parameter`, `value` integers 0..255 | Stove observed off |
+| `duepi.send_command` | `command` four hex characters | None |
+| `duepi.send_raw` | `command` six uppercase alphanumeric characters | None |
 
-The YAML automation actions and native API actions handle authorization internally,
-just like the Write button; no separate arming step is needed. Fields support ESPHome lambdas.
-For hub `id: stove`, the generated native API actions
-are `stove_installer_read(parameter)`, `stove_installer_write(parameter,value)`,
-`stove_send_command(command)` and `stove_send_raw(payload)`; Home Assistant prefixes
-these with the node name. Another attempt after a failed write requires a new
-write/send. See [State and Authorization](docs/ARCHITECTURE.md#state-and-authorization)
-for authorization expiry and observation recovery.
+Fields support ESPHome lambdas. With `api:` configured and hub `id: stove`, the
+native API actions are `stove_installer_read(parameter)`,
+`stove_installer_write(parameter,value)`, `stove_send_command(command)` and
+`stove_send_raw(payload)`. Home Assistant prefixes these with the node name.
+
+The hub adds framing and checksum to custom commands. **Custom commands bypass
+normal firmware, alarm, phase and parameter checks, including the off-state
+requirement.** Ordinary-shutdown and pending-Off protections still apply.
+Restrict API access: these interfaces are not limited to safe reads.
+
+**Custom Response Data** shows `Pending`, a hexadecimal reply, or `Unavailable`
+on rejection, cancellation or timeout. A reply does not verify physical operation.
+See [State and Authorization](docs/ARCHITECTURE.md#state-and-authorization) for
+internal authorization and recovery behavior.
 
 ## Logging
 
