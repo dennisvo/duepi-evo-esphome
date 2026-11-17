@@ -502,6 +502,8 @@ In priority order:
     against selected power level
 - [ ] Fix installer parameter writes and verify whether reads are also affected,
 	including readback verification.
+- [ ] Investigate the TXB0104 logic-level shifter blocking UART signals; evaluate
+	a [TXU0202](https://www.ti.com/product/TXU0202) as an alternative for 5 V/3.3 V UART.
 - [ ] Complete the protocol reference with full alarm and phase tables,
 	numeric-code explanations, known but unimplemented reads and newer-app findings.
 - [ ] Verify alarm and input meanings for identified controllers and firmware,
