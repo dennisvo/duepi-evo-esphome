@@ -80,7 +80,7 @@ sensor:
     target_temperature:
       name: Target Temperature
     phase_code:
-      name: Phase Code
+      name: Stove Phase Code
       entity_category: diagnostic
     alarm_code:
       name: Alarm Code

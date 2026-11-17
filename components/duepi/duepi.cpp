@@ -358,7 +358,7 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
       this->text_[1]->publish_state(this->state_.firmware.data());
     }
     if (request.command == Command::BOARD && this->text_[2] != nullptr)
-      this->text_[2]->publish_state(response->byte() == 0 ? "Air (unverified)" : "Hydro (unverified)");
+      this->text_[2]->publish_state(response->byte() == 0 ? "Air" : "Hydro");
     if ((request.command == Command::ALARM || request.command == Command::FIRMWARE) && this->text_[3] != nullptr &&
         this->state_.fresh(Command::ALARM, millis(), this->stale_after_)) {
       uint16_t code = this->state_.fields[static_cast<size_t>(Command::ALARM)].data >> 8;

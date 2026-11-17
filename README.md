@@ -27,6 +27,7 @@ this project. The software is provided without warranty; see [LICENSE](LICENSE).
 - [Installer and Custom Commands](#installer-and-custom-commands)
 - [Logging](#logging)
 - [Development](#development)
+- [Todo](#todo)
 - [License](#license)
 
 ## Status and Scope
@@ -301,8 +302,8 @@ Default Home Assistant Organization:
 | --- | --- |
 | Sensors | Room/target/flue temperatures, Power, Auger Level, phase and alarm text |
 | Controls | Climate, optional power-level number and alarm-reset button |
-| Configuration | Target-temperature limits and installer access/parameter tools |
-| Diagnostics | Fan/exhaust speeds, PCB temperature, runtime counters, communication, raw codes, identity, transaction result, target source, last response, Installer Result, Custom Response Data and the five optional readings below |
+| Configuration | Target-temperature limits, installer access/parameter tools and Installer Result |
+| Diagnostics | Fan/exhaust speeds, PCB temperature, runtime counters, communication, raw codes, identity, transaction result, target source, last response, Custom Response Data and the five optional readings below |
 
 These are component schema defaults. For entities declared in your YAML,
 override with `entity_category`; `entity_category: ""` restores normal placement.
@@ -516,6 +517,28 @@ use `.venv/bin/python` in place of `.venv\Scripts\python.exe`.
 Validation binaries use public dummy credentials and must not be deployed.
 See [development details](docs/ARCHITECTURE.md#development) for build variants,
 validation tooling and CI requirements.
+
+## Todo
+
+In priority order:
+
+- [ ] Complete the protocol reference with full alarm and phase tables,
+	numeric-code explanations, known but unimplemented reads and newer-app findings.
+- [ ] Resolve power behavior by comparing panel and remote changes against
+	selected power, auger level and phase, starting with the reported A060 behavior.
+- [ ] Verify alarm and input meanings for identified controllers and firmware,
+	including the observed input value `0x0800`.
+- [ ] Confirm diagnostic units, correction signedness, cycle-time interpretation
+	and runtime-counter units.
+- [ ] Establish installer parameter mappings with documented addresses, scaling,
+	ranges and firmware applicability; neither analyzed app provides a catalogue.
+- [ ] Record verified controller capabilities, including supported reads and
+	demonstrated firmware differences.
+
+Lower priority:
+
+- [ ] Evaluate the newer app's local standby-power preference and establish
+	resume behavior before considering equivalent functionality.
 
 ## Thanks
 

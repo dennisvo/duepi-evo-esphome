@@ -28,9 +28,12 @@ def entity_config(hub_id):
         values[key] = button.button_schema(DuepiInstallerButton, entity_category="config")(
             {"id": f"{hub_id}_installer_{key}", "name": name}
         )
-    for key, name in (("result", "Installer Result"), ("response", "Custom Response Data")):
+    for key, name, category in (
+        ("result", "Installer Result", "config"),
+        ("response", "Custom Response Data", "diagnostic"),
+    ):
         values[key] = text_sensor.text_sensor_schema()(
-            {"id": f"{hub_id}_installer_{key}", "name": name, "entity_category": "diagnostic"}
+            {"id": f"{hub_id}_installer_{key}", "name": name, "entity_category": category}
         )
     return values
 
