@@ -17,14 +17,17 @@ def entity_config(hub_id):
             {"id": f"{hub_id}_installer_api"}
         )
     }
-    for key, name in (("parameter", "Installer Parameter Number"), ("value", "Installer Proposed Raw Value")):
+    for key, name in (
+        ("parameter", "Installer Input: Parameter Number"),
+        ("value", "Installer Input: Value to Write"),
+    ):
         values[key] = number.number_schema(DuepiInstallerValue, entity_category="config")(
             {"id": f"{hub_id}_installer_{key}", "name": name, "mode": "BOX"}
         )
     values["access"] = switch.switch_schema(
         DuepiPrivilegeSwitch, default_restore_mode="ALWAYS_OFF", block_inverted=True, entity_category="config"
     )({"id": f"{hub_id}_installer_access", "name": "Installer Access"})
-    for key, name in (("read", "Read Installer Parameter"), ("write", "Write Installer Parameter")):
+    for key, name in (("read", "Installer Operation: Read"), ("write", "Installer Operation: Write")):
         values[key] = button.button_schema(DuepiInstallerButton, entity_category="config")(
             {"id": f"{hub_id}_installer_{key}", "name": name}
         )

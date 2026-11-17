@@ -390,9 +390,18 @@ access is never restored. The parameter selectors, read/write buttons and result
 sensors are generated automatically.
 Native API actions are also registered automatically when `api:` is configured.
 
+The generated Configuration entities sort alphabetically in this order:
+
+- **Installer Access**
+- **Installer Input: Parameter Number**
+- **Installer Input: Value to Write**
+- **Installer Operation: Read**
+- **Installer Operation: Write**
+- **Installer Result**
+
 To inspect one parameter on demand in Home Assistant, enable **Installer Access**,
-enter its numeric address (0..255) in **Installer Parameter Number**, then press
-**Read Installer Parameter**. The raw returned value appears in **Installer
+enter its numeric address (0..255) in **Installer Input: Parameter Number**, then press
+**Installer Operation: Read**. The raw returned value appears in **Installer
 Result**, alongside the parameter number. Changing the selection alone sends
 nothing; parameters are not scanned or periodically polled. No stove profile is
 needed for a read, but Installer Access must be on for both reads
@@ -406,8 +415,8 @@ finished. Serial addresses are not a verified mapping to printed PR numbers or
 their units. Cancelling a caller does not cancel an already submitted request.
 
 To write, first read the documented parameter and record its original value.
-Enter the intended byte (0..255) in **Installer Proposed Raw Value**, press
-**Write Installer Parameter**, then check **Installer Result**. The write uses
+Enter the intended raw byte (0..255) in **Installer Input: Value to Write**, press
+**Installer Operation: Write**, then check **Installer Result**. The write uses
 the currently selected parameter and proposed value. Editing
 either field alone sends nothing. The proposed value starts at zero as a local
 placeholder, not a recommended setting or an observed value, and is not restored

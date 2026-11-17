@@ -132,6 +132,17 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(set(entities), {"api", "access", "parameter", "value", "read", "write", "result", "response"})
         self.assertEqual(entities["access"]["restore_mode"], "ALWAYS_OFF")
         self.assertEqual(entities["access"]["name"], "Installer Access")
+        self.assertEqual(
+            sorted(entities[key]["name"] for key in ("access", "parameter", "value", "read", "write", "result")),
+            [
+                "Installer Access",
+                "Installer Input: Parameter Number",
+                "Installer Input: Value to Write",
+                "Installer Operation: Read",
+                "Installer Operation: Write",
+                "Installer Result",
+            ],
+        )
         for key in ("access", "parameter", "value", "read", "write", "result"):
             self.assertEqual(entities[key]["entity_category"], "config")
         self.assertEqual(entities["response"]["entity_category"], "diagnostic")

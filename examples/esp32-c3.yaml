@@ -92,6 +92,7 @@ sensor:
       entity_category: diagnostic
     d4000:
       name: Auger Level
+      entity_category: diagnostic
     power_level:
       name: Power
     flue_temperature:
