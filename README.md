@@ -300,10 +300,10 @@ Default Home Assistant Organization:
 
 | Home Assistant section | Entities |
 | --- | --- |
-| Sensors | Room/target/flue temperatures, Power, Auger Level, phase and alarm text |
+| Sensors | Room/target temperatures, Power, Auger Level, phase and alarm text |
 | Controls | Climate, optional power-level number and alarm-reset button |
 | Configuration | Target-temperature limits, installer access/parameter tools and Installer Result |
-| Diagnostics | Fan/exhaust speeds, PCB temperature, runtime counters, communication, raw codes, identity, transaction result, target source, last response, Custom Response Data and the five optional readings below |
+| Diagnostics | Flue/PCB temperatures, fan/exhaust speeds, runtime counters, communication, raw codes, identity, transaction result, target source, last response, Custom Response Data and the five optional readings below |
 
 These are component schema defaults. For entities declared in your YAML,
 override with `entity_category`; `entity_category: ""` restores normal placement.
@@ -531,10 +531,12 @@ validation tooling and CI requirements.
 
 In priority order:
 
+- [ ] Fix remote power-level changes not applying; compare panel and remote changes
+    against selected power level
+- [ ] Fix installer parameter writes and verify whether reads are also affected,
+	including readback verification.
 - [ ] Complete the protocol reference with full alarm and phase tables,
 	numeric-code explanations, known but unimplemented reads and newer-app findings.
-- [ ] Resolve power behavior by comparing panel and remote changes against
-	selected power, auger level and phase, starting with the reported A060 behavior.
 - [ ] Verify alarm and input meanings for identified controllers and firmware,
 	including the observed input value `0x0800`.
 - [ ] Confirm diagnostic units, correction signedness, cycle-time interpretation

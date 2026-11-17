@@ -111,10 +111,10 @@ sensor:
       name: Runtime Counter Service
       entity_category: diagnostic
     # Optional diagnostics: uncomment readings supported by your controller.
-    # flue_extraction_speed:
-    #   name: Flue Extraction Speed
-    # extraction_sensor_level:
-    #   name: Extraction Sensor Level
+    flue_extraction_speed:
+      name: Flue Extraction Speed
+    extraction_sensor_level:
+      name: Extraction Sensor Level
     # flue_motor_correction:
     #   name: Flue Motor Correction
     # pellet_correction:

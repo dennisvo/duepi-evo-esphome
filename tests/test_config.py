@@ -74,7 +74,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_sensor_entity_categories(self):
         sensors = importlib.import_module("duepi.sensor")
-        primary = {"room_temperature", "target_temperature", "flue_temperature", "power_level", "d4000"}
+        primary = {"room_temperature", "target_temperature", "power_level", "d4000"}
         config = sensors.CONFIG_SCHEMA({
             "duepi_id": "stove", **{key: {"name": key} for key in sensors.FIELDS},
         })

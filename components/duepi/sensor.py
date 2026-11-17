@@ -25,7 +25,7 @@ FIELDS = {
 }
 
 DIAGNOSTIC_FIELDS = {
-    "phase_code", "d3000", "exhaust_speed", "alarm_code", "inputs_code", "pcb_temperature",
+    "phase_code", "d3000", "flue_temperature", "exhaust_speed", "alarm_code", "inputs_code", "pcb_temperature",
     "total_runtime_counter", "service_runtime_counter", "flue_extraction_speed",
     "extraction_sensor_level", "flue_motor_correction", "pellet_correction",
 }
