@@ -28,6 +28,7 @@ class TestHub : public DuepiHub {
     this->observe(Command::ALARM, 0);
   }
   void tick() { this->engine_.tick(millis()); }
+  void poll() { this->schedule_(millis()); this->tick(); }
   bool queue(Request request) { return this->engine_.enqueue(request, millis()); }
   size_t queued() const { return this->engine_.queued(); }
   void cache_phase(uint16_t phase) {
@@ -70,6 +71,7 @@ class TestLevel : public DuepiLevel {
 };
 
 void power_preset_tests() {
+  const std::vector<std::string> presets = {"Min", "Low", "Medium", "High", "Max"};
   for (uint16_t level = 1; level <= 5; ++level) {
     test_now = 0;
     TestHub hub;
@@ -80,12 +82,11 @@ void power_preset_tests() {
     hub.set_climate(&climate);
     hub.set_level_number(&number);
     hub.setup();
-    CHECK(climate.supported_custom_presets == std::vector<std::string>({
-        "Power level 1", "Power level 2", "Power level 3", "Power level 4", "Power level 5"}));
+    CHECK(climate.supported_custom_presets == presets);
     CHECK(!climate.has_custom_preset());
     CHECK(std::isnan(number.state));
     climate::ClimateCall call;
-    call.custom_preset = "Power level " + std::to_string(level);
+    call.custom_preset = presets[level - 1];
     climate.control(call);
     CHECK(hub.queued() == 0);
     hub.synchronize();
@@ -93,18 +94,20 @@ void power_preset_tests() {
     CHECK(hub.queued() == 0);
     CHECK(hub.writes.empty());
     CHECK(climate.mode == climate::CLIMATE_MODE_OFF);
+    CHECK(climate.get_custom_preset() == call.custom_preset);
+    CHECK(number.state == level);
     hub.observe(Command::PHASE, 0x020100);
     hub.observe(Command::TARGET, 0x001500);
     climate.control(call);
     CHECK(hub.queued() == 1);
-    CHECK(!climate.has_custom_preset());
-    CHECK(std::isnan(number.state));
+    CHECK(climate.get_custom_preset() == call.custom_preset);
+    CHECK(number.state == level);
     CHECK(climate.target_temperature == 21);
     hub.tick();
     CHECK(hub.writes.size() == 1);
     CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) ==
           "RF00" + std::to_string(level) + "0");
-    CHECK(!climate.has_custom_preset());
+    CHECK(climate.get_custom_preset() == call.custom_preset);
     test_now = 1;
     hub.receive("000000");
     CHECK(climate.get_custom_preset() == call.custom_preset);
@@ -141,7 +144,7 @@ void power_preset_tests() {
       hub.tick();
       hub.receive("000000");
       CHECK(number.state == 2);
-      CHECK(climate.get_custom_preset() == "Power level 2");
+      CHECK(climate.get_custom_preset() == "Low");
       climate.control(call);
       test_now = 201;
       hub.tick();
@@ -149,11 +152,202 @@ void power_preset_tests() {
       hub.tick();
       CHECK(hub.writes.size() == 3);
     }
-    CHECK(!climate.has_custom_preset());
-    CHECK(std::isnan(number.state));
+    if (level == 1) {
+      CHECK(climate.get_custom_preset() == call.custom_preset);
+      CHECK(number.state == level);
+    } else {
+      CHECK(!climate.has_custom_preset());
+      CHECK(std::isnan(number.state));
+    }
   }
   test_now = 0;
-  std::cout << "PASS: climate Power level 1..5, ACK-only shared state, rejection, cancellation, timeout, shutdown, stale and recovery\n";
+  std::cout << "PASS: climate Min/Low/Medium/High/Max map to levels 1..5, ACK-only shared state, rejection, cancellation, timeout, shutdown, stale and recovery\n";
+}
+
+void power_feedback_tests() {
+  const char *presets[] = {"Min", "Low", "Medium", "High", "Max"};
+  for (uint16_t phase : {0x0101, 0x0201}) {
+    test_now = 0;
+    TestHub hub;
+    TestLevel number;
+    TestClimate climate;
+    sensor::Sensor reported;
+    climate.set_parent(&hub);
+    hub.set_climate(&climate);
+    hub.set_level_number(&number);
+    hub.set_numeric_sensor(static_cast<size_t>(Command::REQUESTED_POWER), &reported);
+    hub.setup();
+    hub.synchronize();
+    CHECK(hub.request_level(5));
+    hub.observe(Command::REQUESTED_POWER, 0x000100);
+    CHECK(number.state == 5 && reported.state == 1);
+    CHECK(climate.get_custom_preset() == "Max");
+    hub.observe(Command::PHASE, static_cast<uint32_t>(phase) << 8);
+    hub.observe(Command::REQUESTED_POWER, 0x000200);
+    CHECK(number.state == 2 && reported.state == 2);
+    CHECK(climate.get_custom_preset() == "Low");
+    hub.observe(Command::PHASE, 0);
+    CHECK(hub.request_level(4));
+    hub.observe(Command::REQUESTED_POWER, 0x000200);
+    CHECK(number.state == 4 && reported.state == 2);
+    CHECK(climate.get_custom_preset() == "High");
+    CHECK(hub.writes.empty());
+  }
+  for (uint16_t level = 1; level <= 5; ++level) {
+    test_now = 0;
+    TestHub hub;
+    TestLevel number;
+    TestClimate climate;
+    sensor::Sensor reported;
+    text_sensor::TextSensor status;
+    climate.set_parent(&hub);
+    hub.set_climate(&climate);
+    hub.set_level_number(&number);
+    hub.set_numeric_sensor(static_cast<size_t>(Command::REQUESTED_POWER), &reported);
+    hub.set_text_sensor(4, &status);
+    hub.setup();
+    CHECK(!hub.request_level(level));
+    CHECK(hub.writes.empty());
+    hub.synchronize();
+    hub.observe(Command::REQUESTED_POWER, 0x000500);
+    CHECK(number.state == 5 && reported.state == 5);
+    CHECK(climate.get_custom_preset() == "Max");
+    CHECK(hub.request_level(level));
+    CHECK(hub.writes.empty() && hub.queued() == 0);
+    CHECK(number.state == level);
+    CHECK(climate.get_custom_preset() == presets[level - 1]);
+    hub.observe(Command::REQUESTED_POWER, 0x000500);
+    CHECK(number.state == level && reported.state == 5);
+    CHECK(hub.request_start());
+    hub.tick();
+    CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) ==
+          "RF00" + std::to_string(level) + "0");
+    test_now = 1;
+    hub.receive("000000");
+    hub.observe(Command::PHASE, 0x010100);
+    CHECK(status.state.find("verified by readback") != std::string::npos);
+    hub.observe(Command::FIRMWARE, 0xA06000);
+    hub.observe(Command::BOARD, 0);
+    hub.observe(Command::ROOM, 0x00D700);
+    hub.observe(Command::ALARM, 0);
+    CHECK(hub.request_level(level));
+    test_now = 101;
+    hub.tick();
+    hub.receive("000000");
+    hub.publish();
+    CHECK(number.state == level);
+    CHECK(status.state.find("value=" + std::to_string(level)) != std::string::npos);
+    hub.observe(Command::D4000, static_cast<uint32_t>(level) << 8);
+    CHECK(status.state.find("acknowledged, unverified") != std::string::npos);
+    hub.observe(Command::REQUESTED_POWER, static_cast<uint32_t>(level) << 8);
+    CHECK(reported.state == level && number.state == level);
+    CHECK(climate.get_custom_preset() == presets[level - 1]);
+    CHECK(status.state.find("verified by readback") != std::string::npos);
+    hub.observe(Command::PHASE, 0x020100);
+    CHECK(hub.request_level(3));
+    test_now = 201;
+    hub.tick();
+    hub.receive("000000");
+    hub.observe(Command::REQUESTED_POWER, 0x000100);
+    CHECK(status.state.find("requested=3 reported=1: readback mismatch") != std::string::npos);
+    CHECK(number.state == 1);
+    CHECK(climate.get_custom_preset() == "Min");
+    CHECK(hub.request_level(4));
+    test_now = 301;
+    hub.tick();
+    hub.receive("000000");
+    hub.observe(Command::REQUESTED_POWER, 0);
+    CHECK(std::isnan(reported.state));
+    CHECK(number.state == 4);
+    CHECK(status.state.find("readback unavailable") != std::string::npos);
+    CHECK(hub.request_level(2));
+    test_now = 401;
+    hub.tick();
+    hub.receive("000000");
+    test_now = 15401;
+    hub.observe(Command::REQUESTED_POWER, 0x000200);
+    CHECK(status.state.find("readback unavailable") != std::string::npos);
+    CHECK(status.state.find("verified by readback") == std::string::npos);
+    test_now = 60401;
+    hub.observe(Command::PHASE, 0x020100);
+    hub.observe(Command::ROOM, 0x00D700);
+    hub.observe(Command::ALARM, 0);
+    CHECK(std::isnan(reported.state));
+  }
+  {
+    test_now = 0;
+    TestHub hub;
+    TestLevel number;
+    sensor::Sensor reported;
+    text_sensor::TextSensor status;
+    hub.set_level_number(&number);
+    hub.set_numeric_sensor(static_cast<size_t>(Command::REQUESTED_POWER), &reported);
+    hub.set_text_sensor(4, &status);
+    hub.setup();
+    hub.synchronize();
+    hub.observe(Command::PHASE, 0x020100);
+    CHECK(hub.request_level(3));
+    hub.tick();
+    test_now = 1;
+    hub.receive("000000");
+    const char *replies[] = {"A06000", "000000", "020100", "00D700", "000000", "000300"};
+    for (size_t index = 0; index < 6; ++index) {
+      test_now = 101 + index * 100;
+      hub.poll();
+      CHECK(hub.writes.size() == index + 2);
+      if (index == 5)
+        CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RC5000");
+      hub.receive(replies[index]);
+    }
+    hub.publish();
+    CHECK(number.state == 3 && reported.state == 3);
+    CHECK(status.state.find("verified by readback") != std::string::npos);
+    hub.recover();
+    hub.publish();
+    CHECK(std::isnan(number.state));
+  }
+  for (bool enabled : {false, true}) {
+    test_now = 0;
+    TestHub hub;
+    hub.set_read_power_level(enabled);
+    hub.setup();
+    const char *replies[] = {"A06000", "000000", "000000", "00D700", "000000", "000300"};
+    for (size_t index = 0; index < 6; ++index) {
+      hub.poll();
+      CHECK(hub.writes.size() == index + 1);
+      if (index == 5)
+        CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) ==
+              (enabled ? "RC5000" : "RC6000"));
+      hub.receive(replies[index]);
+      test_now += 100;
+    }
+  }
+  for (FirmwareProfile profile : {FirmwareProfile::FW_9200, FirmwareProfile::FW_E670, FirmwareProfile::FW_E693}) {
+    test_now = 0;
+    TestHub hub;
+    TestLevel number;
+    hub.set_level_number(&number);
+    hub.set_firmware_profile(profile);
+    hub.setup();
+    hub.synchronize();
+    CHECK(hub.request_level(3));
+    CHECK(number.state == 3);
+    CHECK(hub.request_start());
+    hub.tick();
+    CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) ==
+          (profile == FirmwareProfile::FW_9200 ? "RF0050" : "RF0060"));
+        test_now = 1;
+        hub.receive("000000");
+        hub.observe(Command::PHASE, 0x010100);
+        hub.observe(Command::FIRMWARE, 0xA06000);
+        hub.observe(Command::BOARD, 0);
+        hub.observe(Command::ROOM, 0x00D700);
+        hub.observe(Command::ALARM, 0);
+        hub.observe(Command::REQUESTED_POWER, 0x000200);
+        CHECK(number.state == 2);
+  }
+  test_now = 0;
+  std::cout << "PASS: C500 readback, local off-state selection, selected-level startup, ignition writes, readback match/mismatch/unavailable/expiry, optional polling and explicit legacy overrides\n";
 }
 
 void normal_tests() {
@@ -212,7 +406,7 @@ void normal_tests() {
   CHECK(hub.writes.size() == 1);
   hub.synchronize();
   CHECK(hub.request_start());
-  CHECK(hub.request_level(3) == false);
+  CHECK(hub.request_level(3));
   CHECK(hub.request_off());
   hub.tick();
   CHECK(hub.writes.size() == 2);
@@ -241,7 +435,7 @@ void normal_tests() {
     CHECK(starting.request_start());
     starting.tick();
     CHECK(starting.writes.size() == 1);
-    const char *expected = firmware == 0x920000U ? "RF0050" : firmware == 0x123400U ? "RF0010" : "RF0060";
+    const char *expected = "RF0010";
     CHECK(std::string(starting.writes[0].begin() + 1, starting.writes[0].begin() + 7) == expected);
     test_now = 1;
     starting.receive("000000");
@@ -667,7 +861,7 @@ void installer_disabled_before_ack_test() {
   CHECK(hub.request_start());
   test_now += 100;
   hub.tick();
-  CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RF0050");
+  CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RF0010");
   for (const auto &frame : hub.writes) CHECK(frame[1] != 'L');
   std::cout << "PASS: disabling access before installer ACK invalidates observations and requires a fresh control cycle\n";
 }
@@ -963,7 +1157,7 @@ void logging_tests() {
   hub.synchronize();
   hub.publish();
   CHECK(count_logs("INFO", "Communication healthy") == 1);
-  CHECK(count_logs("INFO", "Controller firmware: 0x9200") == 1);
+  CHECK(count_logs("INFO", "Controller firmware: 9200") == 1);
   size_t initial_info = count_logs("INFO", "");
   hub.observe(Command::FIRMWARE, 0x920000);
   hub.observe(Command::PHASE, 0);
@@ -1006,7 +1200,7 @@ void logging_tests() {
   CHECK(std::string(command_name(static_cast<Command>(255))) == "unknown");
   hub.observe(Command::FIRMWARE, 0xE69300);
   hub.observe(Command::FIRMWARE, 0xE69300);
-  CHECK(count_logs("INFO", "Controller firmware: 0xE693") == 1);
+  CHECK(count_logs("INFO", "Controller firmware: E693") == 1);
   std::cout << "PASS: named command audit, ACK/readback distinction, health transitions, rate-limited timeouts\n";
 }
 
@@ -1307,6 +1501,7 @@ void deferred_off_tests() {
 
 int main() {
   power_preset_tests();
+  power_feedback_tests();
   shutdown_tests();
   deferred_off_tests();
   normal_tests();

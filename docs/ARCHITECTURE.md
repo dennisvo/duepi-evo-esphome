@@ -10,9 +10,9 @@ One ESP device connects to one stove; the schema accepts a single Duepi hub.
 | --- | --- |
 | `protocol.h/.cpp` | Ten-byte codec, checked domains, fixed parser, semantic request construction |
 | `transaction.h/.cpp` | Eight-slot queue, one pending request, ordering/coalescing, timeouts and quiet recovery |
-| `state.h`, `control.h` | Independent observed fields/freshness, firmware-specific semantic write policy |
+| `state.h`, `control.h` | Observed fields/freshness, write authorization and startup profiles |
 | `duepi.h/.cpp` | Sole UART writer, monotonic poll scheduling, entity publication and control submission |
-| `duepi_climate.h/.cpp` | HEAT/OFF adapter, explicitly requested level, explicit reset; no local thermostat |
+| `duepi_climate.h/.cpp` | HEAT/OFF, target temperature and power presets; no local thermostat |
 | `privilege.h`, `privileged.h/.cpp` | Runtime-off one-shot capabilities, installer readback, custom diagnostic isolation |
 | `installer.py` | Conditional installer entities and native API action registration from one build option |
 | `automation.h/.py`, platform Python modules | ESPHome action/code-generation and entity bindings |
@@ -68,8 +68,8 @@ before the next loop tick, triggers recovery rather than accepting the reply.
 Timeout clears partial parsing, cancels queued work, invalidates the control
 synchronization mask, disarms privileges and quarantines input until quiet. A
 read receives at most one retry; a write is indeterminate and never retried.
-Out-of-domain replies are ignored, except for unavailable target feedback as
-described below. Unknown phase/alarm codes remain visible. Optional telemetry
+Out-of-domain replies are ignored, except for unavailable target or power-level
+feedback as described below. Unknown phase/alarm codes remain visible. Optional telemetry
 does not establish core communication health.
 
 Optional initialization compatibility defaults off. The engine holds one
@@ -101,8 +101,7 @@ timeout and an indeterminate transmitted write.
 Eco phases are excluded from this blanket lockout: temperature changes and an
 explicit Off retain normal authorization, while ignition and level restrictions
 remain. Phase `0401` cleaning is not classified as ordinary shutdown. See the
-[protocol reference](PROTOCOL.md#read-commands) for phase sources
-and unverified controller behavior.
+[protocol reference](PROTOCOL.md#phases) for phase codes and write restrictions.
 
 Periodic polling remains the source of phase observations; there is no per-write
 phase query. Panel actions can occur before the next phase poll, and no cached-state
@@ -124,13 +123,32 @@ distinguishes fresh reports, retained readings, acknowledged requests and unknow
 values. Both retained sources are unverified, never persisted or replayed.
 Rejected, cancelled and indeterminate writes cannot update the retained value.
 
-Climate custom presets `Power level 1` through `Power level 5` use the shared
-level-request entry point. They never imply ignition or a temperature change.
-Only a level ACK updates the selected preset and optional legacy level number;
-neither is verified feedback or derived from the D3000 sensor. Rejected, cancelled
-and indeterminate requests do not select a new value. The selection clears on
-UART recovery, stale core telemetry, observed Off or ordinary shutdown. It starts
-unknown after reboot; no preset is restored or replayed.
+Climate custom presets `Min`, `Low`, `Medium`, `High` and `Max` map to controller
+levels 1 through 5 through the shared level-request entry point. They never imply
+ignition or a temperature change.
+Off-state selections are local RAM choices gated by fresh synchronized, alarm-free
+Off state; they send nothing and take precedence over `C500` until Start is
+acknowledged or the stove is observed leaving Off, including a panel start.
+Default startup uses `F00n` at the selected level, or 1
+before any selection/report. Explicit firmware profiles retain legacy start
+overrides; firmware IDs no longer select these automatically.
+
+During ignition/heating, a level ACK updates the displayed choice as unverified.
+`C500` observations publish the numeric power level and, absent a local
+choice, update the preset/number. A fresh match verifies the register; a mismatch
+publishes the reported choice and records both values. Invalid data invalidates
+the sensor without recovery. Stale reports remain unverified retained choices.
+Confirmation is reported through the transaction result. Recovery, stale core
+telemetry and ordinary shutdown hide the preset; Off no longer clears a usable
+selection. Nothing is persisted or replayed and boot/reconnect only reads.
+`D300` Fan Speed and `D400` Auger Level never verify selected power.
+
+The frame parser validates printable payloads and checksum, preserving the raw
+six characters alongside numeric decoding. Nonnumeric responses are accepted only
+for firmware identity with an alphanumeric four-character identifier. Other
+requests remain numeric. Identity is retained as text; the app's `RE8I` alarm
+dictionary is selected by that exact ID, otherwise the app's default map applies.
+Raw alarm codes remain visible and firmware changes refresh their text labels.
 
 Semantic controls validate at enqueue and actual send. Each explicit installer
 write or custom/raw send creates its own internal one-shot authorization and
@@ -171,9 +189,10 @@ ESPHome's normal flash batching. Climate traits read the current limits, but API
 entity discovery carries those traits, not ordinary climate state updates; Home
 Assistant may require an ESPHome integration reload to refresh the visual range.
 
-ACKs are distinct from verification. Normal target/off/ignition verification is
-limited to the latest command and a 15-second readback window. Level/reset cannot
-be verified by uncertain telemetry. Installer readback compares the same parameter
+ACKs are distinct from verification. Normal target/off/ignition/level verification is
+limited to the latest command and a 15-second readback window. Level verification
+uses only `C500`, not actual output or a proof of physical/panel behavior. Reset
+remains unverified. Installer readback compares the same parameter
 and token. Installer completion invalidates old observations even when access was
 disabled before the write ACK and readback is skipped. Terminal readback rejection,
 cancellation or timeout clears the verification busy flag, preserves an

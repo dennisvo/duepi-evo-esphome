@@ -2,11 +2,12 @@
 
 #include "protocol.h"
 #include <array>
+#include <cstdio>
 
 namespace esphome {
 namespace duepi {
 
-constexpr size_t FIELD_COUNT = 14;
+constexpr size_t FIELD_COUNT = 15;
 
 struct ObservedField {
   uint32_t data{0};
@@ -22,11 +23,20 @@ class ObservedState {
   bool update(Command command, const Response &response, uint32_t now) {
     size_t index = static_cast<size_t>(command);
     if (index >= FIELD_COUNT || !accepts({command}, response)) return false;
-    if (command == Command::TARGET && (response.word() < 10 || response.word() > 35)) {
+    if ((command == Command::TARGET && (response.word() < 10 || response.word() > 35)) ||
+      (command == Command::REQUESTED_POWER && (response.word() < 1 || response.word() > 5))) {
       this->fields[index].valid = false;
       return false;
     }
     this->fields[index] = {response.data, now, true};
+    if (command == Command::FIRMWARE) {
+      if (response.payload[0] != 0) {
+        for (size_t offset = 0; offset < 4; ++offset) this->firmware[offset] = response.payload[offset];
+        this->firmware[4] = 0;
+      } else {
+        std::snprintf(this->firmware.data(), this->firmware.size(), "%04X", unsigned(response.word()));
+      }
+    }
     return true;
   }
   bool healthy(uint32_t now, uint32_t lifetime) const {
@@ -41,6 +51,7 @@ class ObservedState {
     for (auto &field : this->fields) field.valid = false;
   }
   std::array<ObservedField, FIELD_COUNT> fields{};
+  std::array<char, 5> firmware{};
 };
 
 inline float numeric_value(Command command, uint32_t data) {

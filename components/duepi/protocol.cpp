@@ -46,16 +46,20 @@ bool decode_response(const WireFrame &frame, Response &response) {
   if (frame[0] != 0x1B || frame[9] != '&') return false;
   uint8_t sum = 0;
   uint32_t value = 0;
+  Response candidate{};
   for (size_t index = 1; index <= 6; ++index) {
+    if (frame[index] < 0x20 || frame[index] > 0x7E || frame[index] == '&') return false;
     int digit = hex_digit(frame[index]);
-    if (digit < 0) return false;
-    value = (value << 4) | static_cast<uint32_t>(digit);
+    if (digit < 0) candidate.numeric = false;
+    value = (value << 4) | static_cast<uint32_t>(digit < 0 ? 0 : digit);
+    candidate.payload[index - 1] = static_cast<char>(frame[index]);
     sum = static_cast<uint8_t>(sum + frame[index]);
   }
   int high = hex_digit(frame[7]);
   int low = hex_digit(frame[8]);
   if (high < 0 || low < 0 || sum != ((high << 4) | low)) return false;
-  response.data = value;
+  candidate.data = candidate.numeric ? value : 0;
+  response = candidate;
   return true;
 }
 
@@ -91,7 +95,7 @@ bool is_write(Command command) { return command >= Command::OFF; }
 const char *command_name(Command command) {
   static const char *const NAMES[] = {
       "phase", "room", "d3000", "d4000", "flue", "exhaust", "alarm", "inputs", "target",
-      "pcb", "firmware", "board", "total_runtime", "service_runtime",
+      "pcb", "firmware", "board", "total_runtime", "service_runtime", "power_level",
     #ifdef USE_DUEPI_INSTALLER
       "installer_read",
     #else
@@ -111,7 +115,7 @@ const char *command_name(Command command) {
 bool build_request(const Request &request, WireFrame &frame) {
   static const char *const READS[] = {
       "D900", "D100", "D300", "D400", "D000", "EF00", "DA00",
-      "C000", "C600", "DF00", "DC00", "C400", "ED00", "EE00"};
+      "C000", "C600", "DF00", "DC00", "C400", "ED00", "EE00", "C500"};
   auto ordinal = static_cast<size_t>(request.command);
   if (ordinal < sizeof(READS) / sizeof(READS[0])) return encode_command(READS[ordinal], 4, frame);
   switch (request.command) {
@@ -131,7 +135,11 @@ bool build_request(const Request &request, WireFrame &frame) {
   #endif
     case Command::RESET: return encode_command("D600", 4, frame);
     case Command::OFF: return encode_command("F000", 4, frame);
-    case Command::START_GENERIC: return encode_command("F001", 4, frame);
+    case Command::START_GENERIC: {
+      if (request.argument > 5) return false;
+      char body[] = {'F', '0', '0', HEX[request.argument == 0 ? 1 : request.argument]};
+      return encode_command(body, sizeof(body), frame);
+    }
     case Command::START_9200: return encode_command("F005", 4, frame);
     case Command::START_E670:
     case Command::START_E693: return encode_command("F006", 4, frame);
@@ -176,13 +184,38 @@ const char *phase_name(uint16_t phase) {
 
 bool known_phase(uint16_t phase) { return phase_name(phase)[0] != 'U'; }
 
+const char *alarm_name(uint16_t code, bool re8i) {
+  static const char *const DEFAULT[] = {
+      "No reported alarm", "Ignition failure", "Extraction sensor fault", "Insufficient extraction",
+      "Water overtemperature", "No pellets", "Pressure/safety thermostat", "Pressure/safety thermostat",
+      "Power loss", "Exhaust motor fault"};
+  static const char *const RE8I[] = {
+      "No reported alarm", "Water thermostat", "Pressure/safety thermostat", "No pellets",
+      "Pressure/safety thermostat", "Generic alarm", "Pressure/safety thermostat", "Exhaust motor fault",
+      "Generic alarm", "Generic alarm", "Generic alarm", "Generic alarm", "Ignition failure",
+      "Generic alarm", "Generic alarm", "Power loss", "Extraction sensor fault", "Unknown",
+      "Insufficient extraction", "Board overtemperature", "Low water pressure", "High water pressure"};
+  if (re8i) return code < sizeof(RE8I) / sizeof(RE8I[0]) ? RE8I[code] : "Unknown";
+  return code < sizeof(DEFAULT) / sizeof(DEFAULT[0]) ? DEFAULT[code] : "Unknown";
+}
+
 bool accepts(const Request &request, const Response &response) {
+  if (request.command == Command::FIRMWARE && response.payload[0] != 0) {
+    for (size_t index = 0; index < 4; ++index) {
+      char character = response.payload[index];
+      if (!((character >= '0' && character <= '9') || (character >= 'A' && character <= 'Z') ||
+            (character >= 'a' && character <= 'z'))) return false;
+    }
+    return !response.numeric || (response.word() != 0 && response.word() != 0xFFFF);
+  }
+  if (!response.numeric) return false;
   switch (request.command) {
 #ifdef USE_DUEPI_INSTALLER
     case Command::CUSTOM: return true;
 #endif
     case Command::ROOM: return response.word() <= 1000;
     case Command::TARGET: return true;
+    case Command::REQUESTED_POWER: return true;
     case Command::D3000:
     case Command::D4000: return response.word() <= 255;
     case Command::FLUE: return response.word() <= 1500;

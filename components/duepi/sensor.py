@@ -17,6 +17,7 @@ FIELDS = {
     "pcb_temperature": (9, UNIT_CELSIUS, 0),
     "total_runtime_counter": (12, None, 0),
     "service_runtime_counter": (13, None, 0),
+    "power_level": (14, None, 0),
 }
 
 CONFIG_SCHEMA = cv.Schema(

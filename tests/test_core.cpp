@@ -60,7 +60,25 @@ void codec_tests() {
   frame[7] = '0';
   CHECK(!decode_response(frame, response));
   frame = synthetic("00G700");
-  CHECK(!decode_response(frame, response));
+  CHECK(decode_response(frame, response));
+  CHECK(!response.numeric);
+  CHECK(!accepts({Command::ROOM}, response));
+  CHECK(!accepts({Command::SET_LEVEL, 3}, response));
+  for (const char *firmware : {"RE8I00", "V50800", "A06000"}) {
+    CHECK(decode_response(synthetic(firmware), response));
+    CHECK(accepts({Command::FIRMWARE}, response));
+    ObservedState state;
+    CHECK(state.update(Command::FIRMWARE, response, 10));
+    CHECK(std::string(state.firmware.data()) == std::string(firmware, 4));
+  }
+  CHECK(decode_response(synthetic("R?8I00"), response));
+  CHECK(!accepts({Command::FIRMWARE}, response));
+  CHECK(std::string(alarm_name(1, false)) == "Ignition failure");
+  CHECK(std::string(alarm_name(1, true)) == "Water thermostat");
+  CHECK(std::string(alarm_name(12, true)) == "Ignition failure");
+  CHECK(std::string(alarm_name(21, true)) == "High water pressure");
+  CHECK(std::string(alarm_name(14, false)) == "Unknown");
+  CHECK(std::string(alarm_name(65535, true)) == "Unknown");
   frame = synthetic("00D700");
   frame[0] = 'X';
   CHECK(!decode_response(frame, response));
@@ -82,6 +100,19 @@ void codec_tests() {
   CHECK(!accepts({Command::START_GENERIC}, Response{1}));
   CHECK(accepts({Command::TARGET}, Response{0x001500}));
   CHECK(accepts({Command::TARGET}, Response{0xFFFF00}));
+  CHECK(build_request({Command::REQUESTED_POWER}, frame));
+  CHECK(std::string(frame.begin() + 1, frame.begin() + 7) == "RC5000");
+  CHECK(!is_write(Command::REQUESTED_POWER));
+  CHECK(std::string(command_name(Command::REQUESTED_POWER)) == "power_level");
+  ObservedState power_state;
+  CHECK(power_state.update(Command::REQUESTED_POWER, Response{0x000300}, 10));
+  CHECK(power_state.fresh(Command::REQUESTED_POWER, 10, 100));
+  CHECK(numeric_value(Command::REQUESTED_POWER, 0x000300) == 3);
+  for (uint32_t value : {0U, 6U, 255U, 65535U}) {
+    CHECK(accepts({Command::REQUESTED_POWER}, Response{value << 8}));
+    CHECK(!power_state.update(Command::REQUESTED_POWER, Response{value << 8}, 20));
+    CHECK(!power_state.fresh(Command::REQUESTED_POWER, 20, 100));
+  }
   for (const char *payload : {"000000", "000900", "002400", "FFFF00"}) {
     FakeIO feedback;
     TransactionEngine engine(feedback);
@@ -285,16 +316,16 @@ void control_tests() {
     CHECK(state.update(command, {command == Command::FIRMWARE ? 0x920000U : 0U}, 100));
   }
   CHECK(policy.permits({Command::OFF}, state, 100, 45000));
-  CHECK(!policy.permits({Command::START_GENERIC}, state, 100, 45000));
+  CHECK(policy.permits({Command::START_GENERIC}, state, 100, 45000));
   CHECK(policy.start_request(state, request));
-  CHECK(request.command == Command::START_9200);
+  CHECK(request.command == Command::START_GENERIC);
   CHECK(policy.permits(request, state, 100, 45000));
   CHECK(!policy.permits({Command::START_E693}, state, 100, 45000));
-  CHECK(!policy.permits({Command::START_GENERIC}, state, 100, 45000));
+  CHECK(policy.permits({Command::START_GENERIC}, state, 100, 45000));
   state.update(Command::FIRMWARE, {0xE67000}, 100);
-  CHECK(policy.start_request(state, request) && request.command == Command::START_E670);
+  CHECK(policy.start_request(state, request) && request.command == Command::START_GENERIC);
   state.update(Command::FIRMWARE, {0xE69300}, 100);
-  CHECK(policy.start_request(state, request) && request.command == Command::START_E693);
+  CHECK(policy.start_request(state, request) && request.command == Command::START_GENERIC);
   state.update(Command::FIRMWARE, {0x123400}, 100);
   CHECK(policy.start_request(state, request) && request.command == Command::START_GENERIC);
   CHECK(policy.permits(request, state, 100, 45000));
@@ -330,6 +361,7 @@ void control_tests() {
   CHECK(!ControlPolicy::verified_by({Command::START_GENERIC}, Command::PHASE, {0xDEAD00}));
   CHECK(!ControlPolicy::verified_by({Command::START_GENERIC}, Command::TARGET, {0x010100}));
   CHECK(!ControlPolicy::verified_by({Command::SET_LEVEL, 3}, Command::D4000, {0x000300}));
+  CHECK(ControlPolicy::verified_by({Command::SET_LEVEL, 3}, Command::REQUESTED_POWER, {0x000300}));
   CHECK(!ControlPolicy::target_request(NAN, request));
   CHECK(!ControlPolicy::target_request(INFINITY, request));
   CHECK(!ControlPolicy::target_request(21.5f, request));

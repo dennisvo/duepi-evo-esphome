@@ -46,6 +46,7 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(): cv.declare_id(DuepiHub),
             cv.Optional("enable_reset", default=False): cv.boolean,
             cv.Optional("init_command", default=False): cv.boolean,
+            cv.Optional("read_power_level", default=True): cv.boolean,
             cv.Optional("min_temperature", default=10): cv.int_range(min=10, max=35),
             cv.Optional("max_temperature", default=25): cv.int_range(min=10, max=35),
             cv.Optional("firmware_profile", default="auto"): cv.enum(PROFILES),
@@ -78,6 +79,7 @@ async def to_code(config):
     await uart.register_uart_device(hub, config)
     cg.add(hub.set_enable_reset(config["enable_reset"]))
     cg.add(hub.set_init_command(config["init_command"]))
+    cg.add(hub.set_read_power_level(config["read_power_level"]))
     cg.add(hub.set_min_temperature(config["min_temperature"]))
     cg.add(hub.set_max_temperature(config["max_temperature"]))
     cg.add(hub.set_firmware_profile(config["firmware_profile"]))

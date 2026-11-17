@@ -55,6 +55,7 @@ duepi:
   # Installer Access starts off in Home Assistant.
   enable_installer: false
   firmware_profile: auto
+  read_power_level: true
   min_temperature: 10
   max_temperature: 25
   init_command: false
@@ -87,9 +88,12 @@ sensor:
       name: Alarm Code
       entity_category: diagnostic
     d3000:
-      name: Power Level
+      name: Fan Speed
+      entity_category: diagnostic
     d4000:
-      name: Pellet Feed Level
+      name: Auger Level
+    power_level:
+      name: Power
     flue_temperature:
       name: Flue Temperature
     exhaust_speed:
@@ -127,7 +131,6 @@ text_sensor:
     target_source:
       name: Target Temperature Source
       entity_category: diagnostic
-
 binary_sensor:
   - platform: duepi
     duepi_id: stove

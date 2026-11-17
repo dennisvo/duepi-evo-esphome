@@ -36,6 +36,18 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(cv.Invalid):
             duepi.CONFIG_SCHEMA([{"id": "stove"}, {"id": "second_stove"}])
 
+    def test_power_level_configuration(self):
+        self.assertTrue(self.config()["read_power_level"])
+        self.assertFalse(self.config(read_power_level=False)["read_power_level"])
+        sensors = importlib.import_module("duepi.sensor")
+        self.assertEqual(sensors.FIELDS["power_level"], (14, None, 0))
+        config = sensors.CONFIG_SCHEMA({
+            "duepi_id": "stove",
+            "power_level": {"name": "Power", "entity_category": "diagnostic"},
+        })
+        self.assertEqual(config["power_level"]["entity_category"], "diagnostic")
+        self.assertEqual(len(duepi_text_sensor.FIELDS), 9)
+
     def test_installer_entities_only_when_included(self):
         config = self.config(enable_installer=True)
         self.assertFalse(config["enable_reset"])

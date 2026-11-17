@@ -6,7 +6,7 @@ namespace esphome {
 namespace duepi {
 
 static const char *const POWER_PRESETS[] = {
-    "Power level 1", "Power level 2", "Power level 3", "Power level 4", "Power level 5"};
+  "Min", "Low", "Medium", "High", "Max"};
 
 DuepiClimate::DuepiClimate() { this->set_supported_custom_presets(POWER_PRESETS); }
 

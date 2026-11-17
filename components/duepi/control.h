@@ -19,19 +19,12 @@ class ControlPolicy {
     return phase == 0x0301 || phase == 0x0801 || phase == 0x0802;
   }
 
-  bool start_request(const ObservedState &state, Request &request) const {
+  bool start_request(const ObservedState &, Request &request, uint16_t level = 1) const {
     FirmwareProfile chosen = this->profile;
-    if (chosen == FirmwareProfile::AUTO) {
-      switch (state.fields[static_cast<size_t>(Command::FIRMWARE)].data >> 8) {
-        case 0x9200: chosen = FirmwareProfile::FW_9200; break;
-        case 0xE670: chosen = FirmwareProfile::FW_E670; break;
-        case 0xE693: chosen = FirmwareProfile::FW_E693; break;
-        default: break;
-      }
-    }
     request.command = chosen == FirmwareProfile::FW_9200 ? Command::START_9200 :
                       chosen == FirmwareProfile::FW_E670 ? Command::START_E670 :
                       chosen == FirmwareProfile::FW_E693 ? Command::START_E693 : Command::START_GENERIC;
+    request.argument = level;
     return true;
   }
 
@@ -48,9 +41,10 @@ class ControlPolicy {
     if (!this->start_request(state, ignition)) return false;
     if (request.command == Command::START_9200 || request.command == Command::START_E670 ||
         request.command == Command::START_E693 || request.command == Command::START_GENERIC)
-      return request.command == ignition.command && phase == 0;
+      return request.command == ignition.command && phase == 0 &&
+             (request.command != Command::START_GENERIC || request.argument <= 5);
     if (request.command == Command::SET_LEVEL)
-      return request.argument >= 1 && request.argument <= 5 && (phase == 0x0200 || phase == 0x0201);
+      return request.argument >= 1 && request.argument <= 5 && ((phase >> 8) == 1 || (phase >> 8) == 2);
     if (request.command == Command::SET_TARGET)
       return request.argument >= this->min_temperature && request.argument <= this->max_temperature;
     return false;
@@ -66,6 +60,8 @@ class ControlPolicy {
   static bool verified_by(const Request &request, Command observed, const Response &response) {
     if (request.command == Command::SET_TARGET)
       return observed == Command::TARGET && response.word() == request.argument;
+    if (request.command == Command::SET_LEVEL)
+      return observed == Command::REQUESTED_POWER && response.word() == request.argument;
     if (observed != Command::PHASE) return false;
     if (request.command == Command::OFF) return response.word() == 0;
     if (request.command == Command::START_9200 || request.command == Command::START_E670 ||

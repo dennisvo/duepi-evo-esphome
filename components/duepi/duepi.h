@@ -26,6 +26,7 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   void dump_config() override;
   void set_update_interval(uint32_t value) { this->update_interval_ = value; }
   void set_runtime_interval(uint32_t value) { this->runtime_interval_ = value; }
+  void set_read_power_level(bool value) { this->read_power_level_ = value; }
   void set_response_timeout(uint32_t value) { this->engine_.timeout = value; }
   void set_inter_transaction_delay(uint32_t value) { this->engine_.spacing = value; }
   void set_quiet_time(uint32_t value) { this->engine_.quiet_time = value; }
@@ -98,6 +99,7 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   void schedule_(uint32_t now);
   void publish_temperature_limits_();
   void publish_requested_level_(uint16_t level);
+  void power_feedback_unavailable_();
   uint32_t lifetime_(size_t index) const;
   struct TemperatureLimits {
     uint16_t minimum;
@@ -118,6 +120,10 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   uint32_t verification_at_{0};
   float retained_target_{NAN};
   bool retained_target_requested_{false};
+  uint16_t desired_level_{1};
+  bool local_level_{false};
+  bool has_level_{false};
+  bool read_power_level_{true};
   std::array<sensor::Sensor *, FIELD_COUNT> numeric_{};
   std::array<text_sensor::TextSensor *, 9> text_{};
   std::array<DuepiPrivilegeSwitch *, 3> privilege_switches_{};

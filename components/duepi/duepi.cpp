@@ -3,6 +3,7 @@
 #include "esphome/core/log.h"
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace esphome {
 namespace duepi {
@@ -74,6 +75,7 @@ void DuepiPrivilegeSwitch::write_state(bool value) {
 
 void DuepiHub::recovery_started() {
   this->publish_requested_level_(0);
+  this->power_feedback_unavailable_();
   ESP_LOGD(TAG, "UART resynchronization: control prerequisites cleared; one-shot permissions disarmed");
   this->sync_mask_ = 0;
   this->verification_pending_ = false;
@@ -191,7 +193,7 @@ bool DuepiHub::submit_(Request request) {
 bool DuepiHub::request_off() { return this->submit_({Command::OFF}); }
 bool DuepiHub::request_start() {
   Request request;
-  this->policy_.start_request(this->state_, request);
+  this->policy_.start_request(this->state_, request, this->desired_level_);
   return this->submit_(request);
 }
 bool DuepiHub::request_target(float value) {
@@ -202,11 +204,46 @@ bool DuepiHub::request_target(float value) {
   }
   return this->submit_(request);
 }
-bool DuepiHub::request_level(uint16_t value) { return this->submit_({Command::SET_LEVEL, value}); }
+bool DuepiHub::request_level(uint16_t value) {
+  if (value < 1 || value > 5) {
+    this->reject_control("Rejected: requested power must be 1..5");
+    return false;
+  }
+  if (this->state_.fresh(Command::PHASE, millis(), this->stale_after_) && this->state_.fields[0].data == 0) {
+    Request start;
+    this->policy_.start_request(this->state_, start, value);
+    if (this->engine_.recovering() || !this->may_transmit(start, millis())) {
+      this->reject_control("Rejected: local power selection requires fresh, synchronized, alarm-free Off state");
+      return false;
+    }
+    this->desired_level_ = value;
+    ++this->token_;
+    this->local_level_ = true;
+    this->has_level_ = true;
+    this->verification_pending_ = false;
+    char buffer[96];
+    std::snprintf(buffer, sizeof(buffer), "Power %u selected locally; no stove command sent", unsigned(value));
+    if (this->text_[4] != nullptr) this->text_[4]->publish_state(buffer);
+    this->publish_requested_level_(value);
+    this->publish_(millis());
+    return true;
+  }
+  return this->submit_({Command::SET_LEVEL, value});
+}
 bool DuepiHub::request_reset() { return this->submit_({Command::RESET}); }
 
 uint32_t DuepiHub::lifetime_(size_t index) const {
-  return index >= 12 ? this->runtime_interval_ * 2 : this->stale_after_;
+  return index == 12 || index == 13 ? this->runtime_interval_ * 2 : this->stale_after_;
+}
+
+void DuepiHub::power_feedback_unavailable_() {
+  if (!this->verification_pending_ || this->verification_.command != Command::SET_LEVEL ||
+      this->verification_.token != this->token_) return;
+  char buffer[112];
+  std::snprintf(buffer, sizeof(buffer), "set_level #%u requested=%u: readback unavailable (unverified)",
+                unsigned(this->verification_.token), unsigned(this->verification_.argument));
+  if (this->text_[4] != nullptr) this->text_[4]->publish_state(buffer);
+  this->verification_pending_ = false;
 }
 
 void DuepiHub::result(const Request &request, Outcome outcome, const Response *response) {
@@ -246,24 +283,30 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
   auto index = static_cast<size_t>(request.command);
   if (outcome == Outcome::ACKNOWLEDGED && response != nullptr && index < FIELD_COUNT) {
     bool changed = !this->state_.fields[index].valid || this->state_.fields[index].data != response->data;
+    if (request.command == Command::FIRMWARE && response->payload[0] != 0)
+      changed = changed || std::strncmp(this->state_.firmware.data(), response->payload.data(), 4) != 0;
     if (changed && request.command == Command::PHASE)
       ESP_LOGI(TAG, "Stove phase: %s (0x%04X)", phase_name(response->word()), unsigned(response->word()));
     if (changed && request.command == Command::ALARM) {
       if (response->word() != 0) ESP_LOGW(TAG, "Stove reports alarm code %u", unsigned(response->word()));
       else ESP_LOGI(TAG, "Stove reports no alarm");
     }
-    if (changed && request.command == Command::FIRMWARE)
-      ESP_LOGI(TAG, "Controller firmware: 0x%04X", unsigned(response->word()));
     if (changed && request.command == Command::BOARD)
       ESP_LOGI(TAG, "Controller board code: %u (type mapping unverified)", unsigned(response->byte()));
     if (!this->state_.update(request.command, *response, millis())) {
-      if (request.command == Command::TARGET) {
-        ESP_LOGD(TAG, "Target feedback unavailable: 0x%04X", unsigned(response->word()));
+      if (request.command == Command::TARGET || request.command == Command::REQUESTED_POWER) {
+        ESP_LOGD(TAG, "%s feedback unavailable: 0x%04X",
+                 request.command == Command::TARGET ? "Target" : "Power level", unsigned(response->word()));
         if (this->numeric_[index] != nullptr) this->numeric_[index]->publish_state(NAN);
         this->published_fresh_[index] = false;
+        if (request.command == Command::REQUESTED_POWER) this->power_feedback_unavailable_();
       }
       return;
     }
+    if (changed && request.command == Command::FIRMWARE)
+      ESP_LOGI(TAG, "Controller firmware: %s", this->state_.firmware.data());
+    if (request.command == Command::PHASE && response->word() != 0)
+      this->local_level_ = false;
     if (request.command == Command::PHASE && ControlPolicy::shutdown_phase(response->word())) {
       ESP_LOGD(TAG, "Ordinary shutdown observed: cancelling queued writes; reads remain available");
       this->engine_.cancel_writes();
@@ -272,7 +315,22 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
       this->retained_target_ = response->word();
       this->retained_target_requested_ = false;
     }
-    if (uint32_t(millis() - this->verification_at_) >= 15000) this->verification_pending_ = false;
+    if (this->verification_pending_ && uint32_t(millis() - this->verification_at_) >= 15000) {
+      this->power_feedback_unavailable_();
+      this->verification_pending_ = false;
+    }
+    if (request.command == Command::REQUESTED_POWER && !this->local_level_) {
+      this->desired_level_ = response->word();
+      this->has_level_ = true;
+      if (this->verification_pending_ && this->verification_.command == Command::SET_LEVEL &&
+          this->verification_.token == this->token_ && response->word() != this->verification_.argument) {
+        char buffer[112];
+        std::snprintf(buffer, sizeof(buffer), "set_level #%u requested=%u reported=%u: readback mismatch",
+                      unsigned(this->verification_.token), unsigned(this->verification_.argument), unsigned(response->word()));
+        if (this->text_[4] != nullptr) this->text_[4]->publish_state(buffer);
+        this->verification_pending_ = false;
+      }
+    }
     if (this->verification_pending_ && this->verification_.token == this->token_ &&
         ControlPolicy::verified_by(this->verification_, request.command, *response)) {
       this->verification_pending_ = false;
@@ -292,27 +350,37 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
       this->text_[0]->publish_state(buffer);
     }
     if (request.command == Command::FIRMWARE && this->text_[1] != nullptr) {
-      std::snprintf(buffer, sizeof(buffer), "%04X", response->word());
-      this->text_[1]->publish_state(buffer);
+      this->text_[1]->publish_state(this->state_.firmware.data());
     }
     if (request.command == Command::BOARD && this->text_[2] != nullptr)
       this->text_[2]->publish_state(response->byte() == 0 ? "Air (unverified)" : "Hydro (unverified)");
-    if (request.command == Command::ALARM && this->text_[3] != nullptr) {
-      static const char *const ALARMS[] = {"No reported alarm", "Ignition failure", "Suction failure",
-          "Insufficient air", "Water temperature", "No pellets", "Pressure switch", "Unknown",
-          "Power loss", "Exhaust motor", "Board surge", "Expiry", "Unknown", "Suction sensor", "Overheating"};
-      const char *description = response->word() < 15 ? ALARMS[response->word()] : "Unknown";
-      std::snprintf(buffer, sizeof(buffer), "%u: %s", response->word(), description);
+    if ((request.command == Command::ALARM || request.command == Command::FIRMWARE) && this->text_[3] != nullptr &&
+        this->state_.fresh(Command::ALARM, millis(), this->stale_after_)) {
+      uint16_t code = this->state_.fields[static_cast<size_t>(Command::ALARM)].data >> 8;
+      const char *description = alarm_name(code, std::strcmp(this->state_.firmware.data(), "RE8I") == 0);
+      std::snprintf(buffer, sizeof(buffer), "%u: %s", unsigned(code), description);
       this->text_[3]->publish_state(buffer);
     }
   }
   if (is_write(request.command)) {
     char buffer[96];
-    std::snprintf(buffer, sizeof(buffer), "Command %u #%u: %s", unsigned(request.command), unsigned(request.token),
-                  OUTCOMES[static_cast<size_t>(outcome)]);
+    std::snprintf(buffer, sizeof(buffer), "%s #%u value=%u: %s", command_name(request.command), unsigned(request.token),
+            unsigned(request.argument), OUTCOMES[static_cast<size_t>(outcome)]);
     if (this->text_[4] != nullptr && request.token == this->token_) this->text_[4]->publish_state(buffer);
     if (outcome == Outcome::ACKNOWLEDGED) {
-      if (request.command == Command::SET_LEVEL) this->publish_requested_level_(request.argument);
+      if (request.command == Command::SET_LEVEL && request.token == this->token_) {
+        this->desired_level_ = request.argument;
+        this->local_level_ = false;
+        this->has_level_ = true;
+        this->publish_requested_level_(request.argument);
+      }
+        if ((request.command == Command::START_GENERIC || request.command == Command::START_9200 ||
+           request.command == Command::START_E670 || request.command == Command::START_E693) &&
+          request.token == this->token_) {
+        this->desired_level_ = request.argument;
+        this->local_level_ = false;
+        this->has_level_ = true;
+      }
       if (request.command == Command::SET_TARGET) {
         this->retained_target_ = request.argument;
         this->retained_target_requested_ = true;
@@ -345,8 +413,12 @@ void DuepiHub::publish_requested_level_(uint16_t level) {
 
 void DuepiHub::publish_(uint32_t now) {
   uint16_t phase = static_cast<uint16_t>(this->state_.fields[0].data >> 8);
-  if (!this->state_.healthy(now, this->stale_after_) || phase == 0 || ControlPolicy::shutdown_phase(phase))
+  if (this->verification_pending_ && uint32_t(now - this->verification_at_) >= 15000)
+    this->power_feedback_unavailable_();
+  if (this->sync_mask_ != 31 || !this->state_.healthy(now, this->stale_after_) || ControlPolicy::shutdown_phase(phase))
     this->publish_requested_level_(0);
+  else
+    this->publish_requested_level_(this->has_level_ ? this->desired_level_ : 0);
   if (this->climate_ != nullptr)
     this->climate_->publish_observed(this->state_, now, this->stale_after_, this->retained_target_);
   if (this->text_[8] != nullptr) {
@@ -381,7 +453,7 @@ void DuepiHub::publish_(uint32_t now) {
 void DuepiHub::schedule_(uint32_t now) {
   static const Command ORDER[] = {
       Command::FIRMWARE, Command::BOARD, Command::PHASE, Command::ROOM, Command::ALARM,
-      Command::TARGET, Command::D3000, Command::D4000, Command::FLUE, Command::EXHAUST,
+      Command::REQUESTED_POWER, Command::TARGET, Command::D3000, Command::D4000, Command::FLUE, Command::EXHAUST,
       Command::INPUTS, Command::PCB, Command::TOTAL_RUNTIME, Command::SERVICE_RUNTIME};
   if (!this->cycle_active_ && uint32_t(now - this->cycle_at_) >= this->update_interval_) {
     this->cycle_active_ = true;
@@ -390,7 +462,8 @@ void DuepiHub::schedule_(uint32_t now) {
   }
   if (uint32_t(now - this->runtime_at_) >= this->runtime_interval_) this->runtime_due_ = true;
   if (!this->cycle_active_ || !this->engine_.ready_to_poll()) return;
-  if (this->cursor_ >= (this->runtime_due_ ? 14 : 12)) {
+  if (this->cursor_ == 5 && !this->read_power_level_) ++this->cursor_;
+  if (this->cursor_ >= (this->runtime_due_ ? 15 : 13)) {
     this->cycle_active_ = false;
     if (this->runtime_due_) this->runtime_at_ = now;
     this->runtime_due_ = false;

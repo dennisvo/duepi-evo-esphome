@@ -13,6 +13,8 @@ using WireFrame = std::array<uint8_t, FRAME_SIZE>;
 
 struct Response {
   uint32_t data{0};
+  std::array<char, 7> payload{};
+  bool numeric{true};
   uint16_t word() const { return static_cast<uint16_t>(data >> 8); }
   uint8_t byte() const { return static_cast<uint8_t>(data >> 16); }
 };
@@ -39,7 +41,7 @@ class FrameParser {
 
 enum class Command : uint8_t {
   PHASE, ROOM, D3000, D4000, FLUE, EXHAUST, ALARM, INPUTS, TARGET,
-  PCB, FIRMWARE, BOARD, TOTAL_RUNTIME, SERVICE_RUNTIME, INSTALLER_READ,
+  PCB, FIRMWARE, BOARD, TOTAL_RUNTIME, SERVICE_RUNTIME, REQUESTED_POWER, INSTALLER_READ,
   OFF, START_9200, START_E670, START_E693, SET_TARGET, SET_LEVEL, RESET,
   INSTALLER_WRITE, CUSTOM, START_GENERIC
 };
@@ -61,6 +63,7 @@ bool build_request(const Request &request, WireFrame &frame);
 bool accepts(const Request &request, const Response &response);
 bool known_phase(uint16_t phase);
 const char *phase_name(uint16_t phase);
+const char *alarm_name(uint16_t code, bool re8i);
 
 }  // namespace duepi
 }  // namespace esphome
