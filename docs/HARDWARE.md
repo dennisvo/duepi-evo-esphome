@@ -48,7 +48,7 @@ See below for detailed pinout and hardware references on ESP32 and the Sparfun.
 it to USB for initial flashing and then disconnect.
 
 ## Electrical Precautions
-v
+
 The tested stove's UART logic levels have been confirmed as 5 V with a multimeter.
 Although users report working setups with direct ESP-to-pellet-stove connections,
 ESP32 GPIO expects 3.3 V logic and is not 5 V tolerant. A suitable 5 V / 3.3 V UART

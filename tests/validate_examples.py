@@ -10,6 +10,7 @@ VARIANTS = {
     "read-only": ("false", "false"),
     "controls": ("true", "false"),
     "installer": ("true", "true"),
+    "c6-read-only": ("false", "false"),
 }
 
 
@@ -30,13 +31,23 @@ def main():
             raise SystemExit(f"Unknown variant: {name}; choose {', '.join(VARIANTS)}")
         config_path = destination / f"duepi-{name}.yaml"
         writes, installer = VARIANTS[name]
-        example = (ROOT / "examples" / "esp32-c3.yaml").read_text(encoding="utf-8")
+        example_name = "esp32-c6.yaml" if name == "c6-read-only" else "esp32-c3.yaml"
+        example = (ROOT / "examples" / example_name).read_text(encoding="utf-8")
         assert "substitutions:" not in example and "${" not in example
         config = yaml.compose(example)
         field(field(config, "esphome"), "name").value = f"duepi-{name}"
         field(field(config, "external_components").value[0], "source").value = "../components"
         field(field(config, "duepi"), "enable_writes").value = writes
         field(field(config, "duepi"), "enable_installer").value = installer
+        if writes == "true":
+            controls = yaml.compose(yaml.safe_dump({
+                "number": [{"platform": "duepi", "duepi_id": "stove", "kind": "level",
+                            "name": "Requested Controller Level (Unverified)", "mode": "box"}],
+                "button": [{"platform": "duepi", "duepi_id": "stove", "name": "Reset Stove Alarm"}],
+            }))
+            field(config, "number").value.extend(field(controls, "number").value)
+            config.value.extend((key, value) for key, value in controls.value if key.value == "button")
+            field(field(config, "duepi"), "enable_reset").value = "true"
         config_path.write_text(yaml.serialize(config), encoding="utf-8")
         print(f"Validating {name}: {operation}", flush=True)
         result = subprocess.run(

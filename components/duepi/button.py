@@ -1,11 +1,19 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
+import esphome.final_validate as fv
 from esphome.components import button
 from . import DuepiHub, duepi_ns
 
 DuepiReset = duepi_ns.class_("DuepiReset", button.Button)
 CONFIG_SCHEMA = button.button_schema(DuepiReset).extend(
     {cv.GenerateID("duepi_id"): cv.use_id(DuepiHub)}
+)
+
+FINAL_VALIDATE_SCHEMA = cv.Schema(
+    {cv.Required("duepi_id"): fv.id_declaration_match_schema({
+        cv.Required("enable_reset"): cv.Any(True, msg="Reset button requires duepi.enable_reset: true"),
+    })},
+    extra=cv.ALLOW_EXTRA,
 )
 
 

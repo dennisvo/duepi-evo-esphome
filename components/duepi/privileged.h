@@ -18,11 +18,9 @@ class DuepiHub;
 class DuepiPrivilegeSwitch : public switch_::Switch {
  public:
   void set_parent(DuepiHub *parent) { this->parent_ = parent; }
-  void set_initialization(bool value) { this->initialization_ = value; }
  protected:
   void write_state(bool value) override;
   DuepiHub *parent_{nullptr};
-  bool initialization_{false};
 };
 
 #ifdef USE_DUEPI_INSTALLER

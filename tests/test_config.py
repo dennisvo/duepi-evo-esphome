@@ -2,8 +2,10 @@ import importlib
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import Mock
 
 import esphome.config_validation as cv
+import esphome.final_validate as fv
 from esphome import automation
 from importlib.metadata import version
 
@@ -61,6 +63,11 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(config["init_command"])
         self.assertFalse(config["enable_writes"])
 
+    def test_initialization_switch_rejected(self):
+        schema = importlib.import_module("duepi.switch").CONFIG_SCHEMA
+        with self.assertRaisesRegex(cv.Invalid, "duepi.init_command"):
+            schema({"name": "Initialization Compatibility", "kind": "initialization", "duepi_id": "stove"})
+
     def test_temperature_limits(self):
         defaults = self.config()
         self.assertEqual(defaults["min_temperature"], 10)
@@ -83,6 +90,35 @@ class ConfigTests(unittest.TestCase):
     def test_level_number_compatibility(self):
         config = duepi_number.CONFIG_SCHEMA({"name": "Requested Level", "duepi_id": "stove"})
         self.assertEqual(config["kind"], "level")
+
+    def test_control_entity_feature_dependencies(self):
+        reset = importlib.import_module("duepi.button")
+        for writes, enabled in ((False, False), (True, False), (True, True)):
+            parent = self.config(enable_writes=writes, enable_reset=enabled)
+            full_config = Mock()
+            full_config.get_path_for_id.return_value = ["duepi", "id"]
+            full_config.get_config_for_path.return_value = parent
+            token = fv.full_config.set(full_config)
+            try:
+                suffix = f"{writes} {enabled}"
+                button = reset.CONFIG_SCHEMA({"name": f"Reset {suffix}", "duepi_id": "stove"})
+                level = duepi_number.CONFIG_SCHEMA({"name": f"Level {suffix}", "duepi_id": "stove"})
+                if enabled:
+                    reset.FINAL_VALIDATE_SCHEMA(button)
+                else:
+                    with self.assertRaisesRegex(cv.Invalid, "enable_reset"):
+                        reset.FINAL_VALIDATE_SCHEMA(button)
+                if writes:
+                    duepi_number.FINAL_VALIDATE_SCHEMA(level)
+                else:
+                    with self.assertRaisesRegex(cv.Invalid, "enable_writes"):
+                        duepi_number.FINAL_VALIDATE_SCHEMA(level)
+                for kind in ("min_temperature", "max_temperature"):
+                    duepi_number.FINAL_VALIDATE_SCHEMA(duepi_number.CONFIG_SCHEMA({
+                        "name": f"{kind} {suffix}", "kind": kind, "duepi_id": "stove",
+                    }))
+            finally:
+                fv.full_config.reset(token)
 
     def test_target_source_diagnostic(self):
         config = duepi_text_sensor.CONFIG_SCHEMA({

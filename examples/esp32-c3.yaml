@@ -63,17 +63,7 @@ duepi:
   update_interval: 10s
   stale_after: 45s
 
-switch:
-  - platform: duepi
-    duepi_id: stove
-    kind: initialization
-    name: Initialization Compatibility
-    entity_category: config
-
 number:
-  - platform: duepi
-    duepi_id: stove
-    name: Last Requested Controller Level (Unverified)
   - platform: duepi
     duepi_id: stove
     kind: min_temperature
@@ -94,8 +84,10 @@ sensor:
       name: Target Temperature
     phase_code:
       name: Phase Code
+      entity_category: diagnostic
     alarm_code:
       name: Alarm Code
+      entity_category: diagnostic
     d3000:
       name: Power Level
     d4000:
@@ -108,10 +100,11 @@ sensor:
       name: PCB Temperature
     inputs_code:
       name: Inputs Code
+      entity_category: diagnostic
     total_runtime_counter:
-      name: Lifetime Runtime Counter
+      name: Runtime Counter Lifetime
     service_runtime_counter:
-      name: Service Runtime Counter
+      name: Runtime Counter Service
 
 text_sensor:
   - platform: duepi
@@ -120,14 +113,19 @@ text_sensor:
       name: Stove Phase
     firmware:
       name: Controller Firmware
+      entity_category: diagnostic
     board_type:
       name: Controller Board Type
+      entity_category: diagnostic
     alarm:
       name: Stove Alarm
     transaction:
-      name: Read Result
+      name: Transaction Result
+      entity_category: diagnostic
     last_response:
       name: Last Accepted Response Uptime
+      entity_category: diagnostic
+      icon: mdi:clock-check-outline
     target_source:
       name: Target Temperature Source
       entity_category: diagnostic
@@ -142,8 +140,3 @@ climate:
   - platform: duepi
     duepi_id: stove
     name: Stove
-
-button:
-  - platform: duepi
-    duepi_id: stove
-    name: Reset Stove Alarm

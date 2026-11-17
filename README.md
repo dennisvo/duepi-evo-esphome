@@ -154,15 +154,14 @@ and entity-discovery details.
 
 ### Initialization Compatibility
 
-The example exposes an **Initialization Compatibility** switch, default off.
-Enable it only when the controller requires the extra initialization sequence.
+Initialization compatibility is a YAML-only stove setting: `duepi.init_command`,
+default false. Enable it only when the controller requires the extra initialization sequence.
 It adds a firmware query before other requests, increasing protocol traffic. If
 initialization times out, the unsent command is cancelled rather than replayed.
 
-`init_command: true` opts into this mode at boot; otherwise runtime changes are
-not restored after reboot. The switch is `platform: duepi`, `kind: initialization`
-and `duepi_id: stove`. It works with writes disabled and sends nothing merely
-because it is toggled. It does not reset alarms, reboot the stove or start ignition.
+Set `init_command: true` and rebuild to opt into this mode. Remove any previous
+`platform: duepi`, `kind: initialization` switch from your YAML. This setting
+works with writes disabled. It does not reset alarms, reboot the stove or start ignition.
 See [Queue and Recovery](docs/ARCHITECTURE.md#queue-and-recovery) for sequencing details.
 
 ### Polling and Timeouts
@@ -182,11 +181,33 @@ poll cycle and missed optional replies.
 
 ## Normal Controls
 
-The example includes climate HEAT/OFF, whole-Celsius targets (10..25 by default),
-a last-requested controller level 1..5, and an explicit alarm-reset button.
+The example includes climate HEAT/OFF and whole-Celsius targets (10..25 by default).
 Controls remain blocked until `enable_writes: true` is configured and the firmware
-is rebuilt. Alarm reset additionally requires `enable_reset: true` on the hub;
-it is never automatic. First check communication and readings with writes disabled.
+is rebuilt. First check communication and readings with writes disabled.
+
+The optional controller-level number sends a level request (1..5); it is not a
+switch or measured feedback. Its displayed value is only the last request, not a
+verified stove setting. Add it only with `enable_writes: true`:
+
+```yaml
+number:
+  - platform: duepi
+    duepi_id: stove
+    kind: level
+    name: Requested Controller Level (Unverified)
+    mode: box
+```
+
+The optional reset button requires both `enable_writes: true` and
+`enable_reset: true` on the hub. Adding it while reset is disabled is a configuration
+error. Reset is never automatic. Omit this entire entry when reset is disabled:
+
+```yaml
+button:
+  - platform: duepi
+    duepi_id: stove
+    name: Reset Stove Alarm
+```
 
 Writes require fresh phase, room, alarm, firmware and board observations after
 startup/recovery. Ignition requires observed Off and no alarm; level changes
@@ -233,7 +254,12 @@ labels, not verified physical speeds; see the [protocol reference](docs/PROTOCOL
 The numeric target sensor is observed
 readback only. The level number is explicitly last-requested and
 unverified. Alarm descriptions are source-derived hints; numeric codes remain.
-`last_response` records wrapping uptime at the last accepted response, not UTC.
+`last_response` records wrapping device uptime at the last accepted response,
+formatted as days, hours, minutes and seconds, not UTC or time since that response.
+It and the raw codes, controller identity and transaction result appear under
+Diagnostics in the example. Existing Home Assistant entity names/categories may
+retain registry customizations; obsolete entities can remain unavailable after
+firmware updates until removed from the entity registry.
 
 The climate target prefers a fresh controller reading. Without one, it retains
 the most recent valid reading or acknowledged target request, whichever occurred

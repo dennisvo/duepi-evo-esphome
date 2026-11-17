@@ -1,5 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
+import esphome.final_validate as fv
 from esphome.components import number
 from esphome.const import UNIT_CELSIUS
 from . import DuepiHub, duepi_ns
@@ -23,6 +24,17 @@ CONFIG_SCHEMA = cv.typed_schema(
     key="kind",
     default_type="level",
 )
+
+
+def validate_feature(config):
+    if config["kind"] == "level":
+        fv.id_declaration_match_schema({
+            cv.Required("enable_writes"): cv.Any(True, msg="Controller level requires duepi.enable_writes: true"),
+        })(config["duepi_id"])
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = validate_feature
 
 
 async def to_code(config):

@@ -39,7 +39,7 @@ void DuepiHub::setup() {
   for (auto *entity : this->text_) if (entity != nullptr) entity->publish_state("Unknown");
   for (size_t index = 0; index < this->privilege_switches_.size(); ++index) {
     auto *entity = this->privilege_switches_[index];
-    if (entity != nullptr) entity->publish_state(index == 2 && this->engine_.init_command);
+    if (entity != nullptr) entity->publish_state(false);
   }
   this->publish_(millis());
 }
@@ -63,16 +63,10 @@ void DuepiHub::dump_config() {
 }
 
 void DuepiPrivilegeSwitch::write_state(bool value) {
-  if (this->initialization_) {
-    if (value != this->parent_->init_command())
-      ESP_LOGI(TAG, "Initialization compatibility %s", value ? "enabled" : "disabled");
-    this->parent_->set_init_command(value);
-    this->publish_state(value);
-    return;
-  }
 #ifdef USE_DUEPI_INSTALLER
   this->publish_state(this->parent_->set_installer_access(value));
 #else
+  (void) value;
   this->publish_state(false);
 #endif
 }
@@ -239,7 +233,9 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
   }
   if (outcome == Outcome::ACKNOWLEDGED && response != nullptr && this->text_[7] != nullptr) {
     char timestamp[48];
-    std::snprintf(timestamp, sizeof(timestamp), "Uptime %lu ms", static_cast<unsigned long>(millis()));
+    const unsigned long seconds = millis() / 1000;
+    std::snprintf(timestamp, sizeof(timestamp), "%lud %02luh %02lum %02lus",
+                  seconds / 86400, (seconds / 3600) % 24, (seconds / 60) % 60, seconds % 60);
     this->text_[7]->publish_state(timestamp);
   }
 #ifdef USE_DUEPI_INSTALLER
