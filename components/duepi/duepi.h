@@ -125,7 +125,7 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   bool has_level_{false};
   bool read_power_level_{true};
   std::array<sensor::Sensor *, FIELD_COUNT> numeric_{};
-  std::array<text_sensor::TextSensor *, 9> text_{};
+  std::array<text_sensor::TextSensor *, 10> text_{};
   std::array<DuepiPrivilegeSwitch *, 3> privilege_switches_{};
 #ifdef USE_DUEPI_INSTALLER
   OneShotPermission installer_permission_;

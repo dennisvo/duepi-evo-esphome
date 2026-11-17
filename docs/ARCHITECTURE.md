@@ -6,6 +6,12 @@ Python schemas run on the build host; C++ owns runtime behavior. YAML describes
 entities, credentials and explicit opt-ins, not protocol scheduling or regulation.
 One ESP device connects to one stove; the schema accepts a single Duepi hub.
 
+The integration targets Air (room-air heating) controllers. Air/Hydro board-type
+reporting is informational: it does not select a family-specific control profile
+or reject Hydro commands. Hydro water/tank telemetry, hydraulic controls and
+water-temperature targets are outside scope. See the
+[controller families](PROTOCOL.md#controller-families) for the distinction from firmware variants.
+
 | Surface | Responsibility |
 | --- | --- |
 | `protocol.h/.cpp` | Ten-byte codec, checked domains, fixed parser, semantic request construction |
@@ -71,6 +77,12 @@ read receives at most one retry; a write is indeterminate and never retried.
 Out-of-domain replies are ignored, except for unavailable target or power-level
 feedback as described below. Unknown phase/alarm codes remain visible. Optional telemetry
 does not establish core communication health.
+
+The five additional diagnostics (`D200`, `DB00`, `DD00`, `DE00`, `D800`) are
+polled only for configured entities. They use normal read timeout/recovery rules
+and do not add control prerequisites. Corrections retain their raw first byte;
+cycle time publishes two decimal byte fields as text and becomes Stale with
+its observation. No diagnostic exposes a write path.
 
 Optional initialization compatibility defaults off. The engine holds one
 requested transaction while a separate firmware query runs, consumes that query's

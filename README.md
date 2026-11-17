@@ -1,8 +1,8 @@
 # duepi-evo-esphome
 
-An ESPHome external component that connects Duepi EVO pellet-stove controllers
-to Home Assistant using an ESP32 and the controller's UART interface. Monitor
-temperatures, operating state and alarms, with optional controls for HEAT/OFF,
+An ESPHome external component that connects Duepi EVO **Air** pellet-stove
+controllers to Home Assistant using an ESP32 and the controller's UART interface.
+Monitor temperatures, operating state and alarms, with optional controls for HEAT/OFF,
 target temperature and controller level.
 
 Alarm reset and advanced installer/custom commands must be explicitly enabled. The stove
@@ -19,7 +19,7 @@ this project. The software is provided without warranty; see [LICENSE](LICENSE).
 ## Contents
 
 - [Status and Scope](#status-and-scope)
-- [Supported Pellet Stoves](#supported-pellet-stoves)
+- [Stove Compatibility](#stove-compatibility)
 - [Setup](#setup)
 - [Hub Configuration](#hub-configuration)
 - [Normal Controls](#normal-controls)
@@ -30,6 +30,11 @@ this project. The software is provided without warranty; see [LICENSE](LICENSE).
 - [License](#license)
 
 ## Status and Scope
+
+Duepi distinguishes **Air** (room-air heating) and **Hydro** (water heating)
+controllers. This project focuses on **Air**. Hydro-specific water/tank telemetry,
+hydraulic controls and water-temperature targets are outside its scope. Reporting
+the board type does not enable a Hydro profile or prevent commands on Hydro hardware.
 
 The component is not tied to a particular ESP32 board: board selection and UART
 pins are configured in YAML. Use an ESPHome-supported ESP32 board with the
@@ -43,14 +48,13 @@ Each ESP device connects to one stove; configure one `duepi:` hub per device.
 See the [architecture](docs/ARCHITECTURE.md) and [protocol reference](docs/PROTOCOL.md)
 for implementation and wire-protocol details.
 
-## Supported Pellet Stoves
+## Stove Compatibility
 
-Because this component uses similar protocol logic to
-[mvroosmalen's ESPHome-Duepi](https://github.com/mvroosmalen1970/ESPHome-Duepi),
-it is expected to work with the pellet stoves below. Compatibility with this
-component still needs to be confirmed for each model.
+The models below appear in
+[mvroosmalen's ESPHome-Duepi compatibility reports](https://github.com/mvroosmalen1970/ESPHome-Duepi).
+They are references, not a validated support list for this component. Confirm
+that the actual controller is Air and check its firmware and behavior for each installation.
 
-- Adler Hydro 25
 - Artel MeNext
 - Artel Next Petit Smart 6
 - Artel Watt 9
@@ -62,6 +66,10 @@ component still needs to be confirmed for each model.
 - NextElite
 - Qlima Delmara 88 S-Line
 - Qlima Viola 85 S-Line
+
+Upstream also lists **Adler Hydro 25**. Shared monitoring and control functions
+may work on this and other Hydro models, but compatibility is unconfirmed and
+Hydro-specific features are not implemented.
 
 ## Setup
 
@@ -278,25 +286,58 @@ queue rules and detection limits.
 
 ## Telemetry and Outcomes
 
-The [configuration example](examples/esp32-c3.yaml) lists the available entities
-and their YAML keys. Rename or omit individual entities to suit your setup.
+The [C3 example](examples/esp32-c3.yaml#L77) and
+[C6 example](examples/esp32-c6.yaml#L75) define standard telemetry and commented
+opt-in diagnostics. Optional operating controls are described under
+[Normal Controls](#normal-controls); installer entities are generated when
+[installer support](#installer-and-custom-commands) is enabled.
+Rename or omit individual YAML entities to suit your setup.
 The binary `communication` sensor means fresh core stove replies, not merely a
 connected Wi-Fi/API session. All entity platforms use `duepi_id: stove`.
 
+Default Home Assistant Organization:
+
+| Home Assistant section | Entities |
+| --- | --- |
+| Sensors | Room/target/flue temperatures, Power, Auger Level, phase and alarm text |
+| Controls | Climate, optional power-level number and alarm-reset button |
+| Configuration | Target-temperature limits and installer access/parameter tools |
+| Diagnostics | Fan/exhaust speeds, PCB temperature, runtime counters, communication, raw codes, identity, transaction result, target source, last response, Installer Result, Custom Response Data and the five optional readings below |
+
+These are component schema defaults. For entities declared in your YAML,
+override with `entity_category`; `entity_category: ""` restores normal placement.
+Auto-generated installer entities have fixed categories. Diagnostic
+categorization does not disable an entity.
+
 Startup numeric telemetry is unknown; stale numeric telemetry becomes NaN/unknown.
-Stale observed text fields are marked Stale. Unsupported optional telemetry degrades separately.
+Stale observed text fields are marked Stale.
 Runtime counters expire after twice their polling interval; their units are
 unconfirmed. **Fan Speed** uses `D300`; **Auger Level** uses `D400`.
 Neither is measured heat output or selected-level verification;
 `D400` can also contain ignition-stage values 6 and 7. Existing YAML keys
 `d3000`/`d4000` remain supported. See the [protocol reference](docs/PROTOCOL.md#read-commands).
 The numeric target and power-level sensors are observed readback only.
+Omitting a standard sensor entity does not stop its register being polled.
+Use `read_power_level: false` to disable `C500` polling. The five optional
+diagnostic readings below are polled only when their entities are configured:
+
+| YAML key | Platform | Reading |
+| --- | --- | --- |
+| `flue_extraction_speed` | `sensor` | Raw flue-extraction speed, separate from exhaust RPM |
+| `extraction_sensor_level` | `sensor` | Raw extraction-sensor level |
+| `flue_motor_correction` | `sensor` | Raw correction byte |
+| `pellet_correction` | `sensor` | Raw correction byte |
+| `cycle_time` | `text_sensor` | Two decimal fields, e.g. `10:11`; duration units unverified |
+
+Uncomment the desired entries in either board example to enable them. These are
+read-only sensors, not correction controls. Missing replies use normal read
+timeout/recovery handling; leave unsupported readings out of the configuration.
+
 Alarm descriptions follow the app's default or `RE8I` firmware dictionary;
 unknown codes stay numeric and labels are not universal OEM safety diagnoses.
 `last_response` records wrapping device uptime at the last accepted response,
 formatted as days, hours, minutes and seconds, not UTC or time since that response.
-It and the raw codes, controller identity and transaction result appear under
-Diagnostics in the example. Existing Home Assistant entity names/categories may
+Existing Home Assistant entity names/categories may
 retain registry customizations; obsolete entities can remain unavailable after
 firmware updates until removed from the entity registry.
 
@@ -313,7 +354,7 @@ can retain its previous value. That retained value is not a new stove reading.
 
 ESPHome climate has no unknown mode enum: before observation it has the framework
 OFF placeholder, and stale/unknown phases retain the last mode/action. Always
-consider the phase diagnostic, numeric freshness and communication sensor; OFF
+consider the reported phase, numeric freshness and communication sensor; OFF
 alone is not proof of a stopped stove.
 
 Transactions distinguish queued, sent, acknowledged/unverified, verified,
@@ -357,20 +398,11 @@ needed for a read, but Installer Access must be on for both reads
 and writes. Confirm the address mapping in your controller documentation rather
 than assuming a printed PR label is the serial address.
 
-For a one-time read of addresses 1..28, see the
-[Home Assistant script example](examples/home-assistant-read-parameters.yaml).
-Merge its top-level script entry into Home Assistant's `scripts.yaml` (not the
-ESPHome configuration), reload scripts, then run it from Developer Tools > Actions
-and select the four installer entities from the same device. Installer support
-must be included in the installed firmware, and Installer Access must already be
-on. Enable the Installer Result diagnostic entity in Home Assistant if disabled.
-The script waits for each fresh result, stops on a failure or timeout, and creates
-a persistent notification containing the collected raw values. It never writes
-parameters or changes Installer Access; turn access off manually afterward.
-Do not use other installer controls or run another scan during the script.
-Addresses 1..28 are a bounded reference range, not a verified mapping to a stove's
-printed PR01..PR028 parameters or their units. Interrupted runs may leave a read
-in flight; cancelling the script does not cancel an already submitted request.
+For multiple parameter reads, submit one at a time and wait for a fresh
+**Installer Result** before continuing. Stop on failure or timeout, avoid other
+installer operations while a read is pending, and turn Installer Access off when
+finished. Serial addresses are not a verified mapping to printed PR numbers or
+their units. Cancelling a caller does not cancel an already submitted request.
 
 To write, first read the documented parameter and record its original value.
 Enter the intended byte (0..255) in **Installer Proposed Raw Value**, press

@@ -7,6 +7,7 @@ from unittest.mock import Mock
 import esphome.config_validation as cv
 import esphome.final_validate as fv
 from esphome import automation
+from esphome.core import CORE
 from importlib.metadata import version
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "components"))
@@ -16,6 +17,9 @@ duepi_text_sensor = importlib.import_module("duepi.text_sensor")
 
 
 class ConfigTests(unittest.TestCase):
+    def setUp(self):
+        CORE.reset()
+
     def config(self, **overrides):
         return duepi.CONFIG_SCHEMA({"id": "stove", "uart_id": "stove_uart", **overrides})
 
@@ -46,7 +50,78 @@ class ConfigTests(unittest.TestCase):
             "power_level": {"name": "Power", "entity_category": "diagnostic"},
         })
         self.assertEqual(config["power_level"]["entity_category"], "diagnostic")
-        self.assertEqual(len(duepi_text_sensor.FIELDS), 9)
+        self.assertEqual(duepi_text_sensor.FIELDS[9], "cycle_time")
+
+    def test_optional_diagnostics(self):
+        sensors = importlib.import_module("duepi.sensor")
+        fields = {
+            "flue_extraction_speed": 15,
+            "extraction_sensor_level": 16,
+            "flue_motor_correction": 17,
+            "pellet_correction": 18,
+        }
+        config = sensors.CONFIG_SCHEMA({
+            "duepi_id": "stove",
+            **{key: {"name": key} for key in fields},
+        })
+        for key, index in fields.items():
+            self.assertEqual(sensors.FIELDS[key], (index, None, 0))
+            self.assertEqual(config[key]["entity_category"], "diagnostic")
+        cycle = duepi_text_sensor.CONFIG_SCHEMA({
+            "duepi_id": "stove", "cycle_time": {"name": "Cycle Time"},
+        })
+        self.assertEqual(cycle["cycle_time"]["entity_category"], "diagnostic")
+
+    def test_sensor_entity_categories(self):
+        sensors = importlib.import_module("duepi.sensor")
+        primary = {"room_temperature", "target_temperature", "flue_temperature", "power_level", "d4000"}
+        config = sensors.CONFIG_SCHEMA({
+            "duepi_id": "stove", **{key: {"name": key} for key in sensors.FIELDS},
+        })
+        for key in sensors.FIELDS:
+            with self.subTest(key=key):
+                if key in primary:
+                    self.assertFalse(config[key].get("entity_category"))
+                else:
+                    self.assertEqual(config[key]["entity_category"], "diagnostic")
+
+    def test_text_entity_categories(self):
+        config = duepi_text_sensor.CONFIG_SCHEMA({
+            "duepi_id": "stove", **{key: {"name": key} for key in duepi_text_sensor.FIELDS},
+        })
+        for key in duepi_text_sensor.FIELDS:
+            with self.subTest(key=key):
+                if key in ("phase", "alarm"):
+                    self.assertFalse(config[key].get("entity_category"))
+                else:
+                    self.assertEqual(config[key]["entity_category"], "diagnostic")
+
+    def test_entity_category_overrides(self):
+        sensors = importlib.import_module("duepi.sensor")
+        numeric = sensors.CONFIG_SCHEMA({
+            "duepi_id": "stove",
+            "pcb_temperature": {"name": "PCB", "entity_category": ""},
+            "room_temperature": {"name": "Room", "entity_category": "diagnostic"},
+        })
+        self.assertFalse(numeric["pcb_temperature"]["entity_category"])
+        self.assertEqual(numeric["room_temperature"]["entity_category"], "diagnostic")
+        text = duepi_text_sensor.CONFIG_SCHEMA({
+            "duepi_id": "stove", "firmware": {"name": "Firmware", "entity_category": ""},
+        })
+        self.assertFalse(text["firmware"]["entity_category"])
+        schema = importlib.import_module("duepi.binary_sensor").CONFIG_SCHEMA
+        communication = schema({"duepi_id": "stove", "communication": {"name": "Communication"}})
+        self.assertEqual(communication["communication"]["entity_category"], "diagnostic")
+        override = schema({
+            "duepi_id": "stove", "communication": {"name": "Communication Override", "entity_category": ""},
+        })
+        self.assertFalse(override["communication"]["entity_category"])
+
+    def test_operating_controls_are_not_configuration(self):
+        level = duepi_number.CONFIG_SCHEMA({"name": "Level", "duepi_id": "stove"})
+        reset = importlib.import_module("duepi.button").CONFIG_SCHEMA({"name": "Reset", "duepi_id": "stove"})
+        self.assertFalse(level.get("entity_category"))
+        self.assertFalse(reset.get("entity_category"))
 
     def test_installer_entities_only_when_included(self):
         config = self.config(enable_installer=True)
@@ -55,6 +130,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(set(entities), {"api", "access", "parameter", "value", "read", "write", "result", "response"})
         self.assertEqual(entities["access"]["restore_mode"], "ALWAYS_OFF")
         self.assertEqual(entities["access"]["name"], "Installer Access")
+        for key in ("access", "parameter", "value", "read", "write"):
+            self.assertEqual(entities[key]["entity_category"], "config")
+        for key in ("result", "response"):
+            self.assertEqual(entities[key]["entity_category"], "diagnostic")
 
     def test_arming_is_not_user_facing(self):
         self.assertEqual(set(duepi.DUEPI_ACTIONS), {

@@ -4,6 +4,20 @@ Commands and labels follow MyDPremote 3.2.5. Framing and additional diagnostics 
 [mvroosmalen's ESPHome-Duepi](https://github.com/mvroosmalen1970/ESPHome-Duepi/tree/20171fd82f06662151f2857c5fd3bf4ac58a550b).
 Support can vary by controller and firmware.
 
+## Controller Families
+
+Duepi distinguishes **Air** controllers for room-air heating from **Hydro**
+controllers for water heating. The `C400` board-type byte identifies these as
+0 and 1 respectively. This project focuses on Air; Hydro water/tank telemetry,
+hydraulic controls and water-temperature targets are not implemented. The
+10..35 C target range is for room-air control, not a Hydro temperature profile.
+
+Board-type reporting is identification, not a compatibility check or command
+lockout. Firmware variants are a separate distinction: `RE8I` selects different
+alarm labels, while legacy startup overrides are explicitly configured. Neither
+firmware identity nor shared commands establish model-specific capabilities or
+installer parameter meanings.
+
 ## Framing
 
 A frame is ten bytes: `ESC` (`0x1B`), six ASCII payload characters, two checksum
@@ -12,7 +26,7 @@ encoded as two uppercase hex digits.
 
 Normal request payloads are `R` + four-character command + `0`.
 Numeric replies contain six hex digits. Most values use the first four;
-runtime counters use all six; board and installer values use the first two.
+runtime counters use all six; board, correction and installer values use the first two.
 Firmware IDs use the first four characters and may contain non-hex letters.
 
 Synthetic example, with spaces added for readability:
@@ -32,6 +46,11 @@ Bodies below use the normal `Rxxxx0` request format.
 | D900 | Phase | See phase table below |
 | D100 | Room temperature | Value / 10, C; signed encoding unknown |
 | D300 | Fan Speed | Raw value; unit unspecified |
+| D200 | Flue Extraction Speed | First four hex digits; raw value |
+| DB00 | Extraction Sensor Level | First four hex digits; raw value |
+| DD00 | Flue Motor Correction | First byte; raw value |
+| DE00 | Pellet Correction | First byte; raw value |
+| D800 | Cycle Time | First two bytes formatted as decimal fields, e.g. 10:11 |
 | D400 | Auger Level | 0..5; ignition can report 6/7 |
 | C500 | Power | Selected level, 1..5 |
 | D000 | Flue temperature | C |
@@ -41,13 +60,17 @@ Bodies below use the normal `Rxxxx0` request format.
 | C600 | Target temperature | Whole C; component accepts 10..35 |
 | DF00 | PCB temperature | C |
 | DC00 | Firmware | Four-character ID, e.g. A060 or RE8I |
-| C400 | Board type | 00 = Air, 01 = Hydro; mapping unverified |
+| C400 | Board type | First byte: 00 = Air, 01 = Hydro; identification, not support |
 | ED00 | Lifetime runtime | Full 24-bit counter; unit unverified |
 | EE00 | Runtime since reset | Full 24-bit counter; unit unverified |
 
 Climate presets follow **Power** (`C500`), not Auger Level or Fan Speed.
 These are levels, not measured heat output or pellet flow. Disable `C500`
 polling with `read_power_level: false` if unsupported.
+
+`D200`, `DB00`, `DD00`, `DE00` and `D800` are polled only when their entities
+are configured. They default to diagnostic. Correction values have no assigned
+unit or signed conversion; Cycle Time is not interpreted as minutes/seconds.
 
 Out-of-range `C500` or `C600` replies mark that reading unavailable without
 triggering transport recovery. Missing or malformed replies use normal timeouts.

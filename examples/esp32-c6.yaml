@@ -96,15 +96,28 @@ sensor:
       name: Flue Temperature
     exhaust_speed:
       name: Exhaust Speed
+      entity_category: diagnostic
     pcb_temperature:
       name: PCB Temperature
+      entity_category: diagnostic
     inputs_code:
       name: Inputs Code
       entity_category: diagnostic
     total_runtime_counter:
       name: Runtime Counter Lifetime
+      entity_category: diagnostic
     service_runtime_counter:
       name: Runtime Counter Service
+      entity_category: diagnostic
+    # Optional diagnostics: uncomment readings supported by your controller.
+    # flue_extraction_speed:
+    #   name: Flue Extraction Speed
+    # extraction_sensor_level:
+    #   name: Extraction Sensor Level
+    # flue_motor_correction:
+    #   name: Flue Motor Correction
+    # pellet_correction:
+    #   name: Pellet Correction
 
 text_sensor:
   - platform: duepi
@@ -129,11 +142,14 @@ text_sensor:
     target_source:
       name: Target Temperature Source
       entity_category: diagnostic
+    # cycle_time:
+    #   name: Cycle Time
 binary_sensor:
   - platform: duepi
     duepi_id: stove
     communication:
       name: Stove Communication
+      entity_category: diagnostic
 
 climate:
   - platform: duepi

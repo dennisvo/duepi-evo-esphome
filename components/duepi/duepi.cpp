@@ -345,6 +345,11 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
       this->numeric_[index]->publish_state(numeric_value(request.command, response->data));
     this->published_fresh_[index] = true;
     char buffer[48];
+    if (request.command == Command::CYCLE_TIME && this->text_[9] != nullptr) {
+      std::snprintf(buffer, sizeof(buffer), "%02u:%02u", unsigned(response->byte()),
+                    unsigned((response->data >> 8) & 0xFF));
+      this->text_[9]->publish_state(buffer);
+    }
     if (request.command == Command::PHASE && this->text_[0] != nullptr) {
       std::snprintf(buffer, sizeof(buffer), "%s (0x%04X)", phase_name(response->word()), response->word());
       this->text_[0]->publish_state(buffer);
@@ -444,7 +449,8 @@ void DuepiHub::publish_(uint32_t now) {
     if (this->published_fresh_[index] && !this->state_.fields[index].fresh(now, this->lifetime_(index))) {
       this->published_fresh_[index] = false;
       if (this->numeric_[index] != nullptr) this->numeric_[index]->publish_state(NAN);
-      int text_index = index == 0 ? 0 : index == 10 ? 1 : index == 11 ? 2 : index == 6 ? 3 : -1;
+      int text_index = index == 0 ? 0 : index == 10 ? 1 : index == 11 ? 2 : index == 6 ? 3 :
+               index == static_cast<size_t>(Command::CYCLE_TIME) ? 9 : -1;
       if (text_index >= 0 && this->text_[text_index] != nullptr) this->text_[text_index]->publish_state("Stale");
     }
   }
@@ -454,7 +460,10 @@ void DuepiHub::schedule_(uint32_t now) {
   static const Command ORDER[] = {
       Command::FIRMWARE, Command::BOARD, Command::PHASE, Command::ROOM, Command::ALARM,
       Command::REQUESTED_POWER, Command::TARGET, Command::D3000, Command::D4000, Command::FLUE, Command::EXHAUST,
-      Command::INPUTS, Command::PCB, Command::TOTAL_RUNTIME, Command::SERVICE_RUNTIME};
+      Command::INPUTS, Command::PCB,
+      Command::FLUE_EXTRACTION_SPEED, Command::EXTRACTION_SENSOR_LEVEL,
+      Command::FLUE_MOTOR_CORRECTION, Command::PELLET_CORRECTION, Command::CYCLE_TIME,
+      Command::TOTAL_RUNTIME, Command::SERVICE_RUNTIME};
   if (!this->cycle_active_ && uint32_t(now - this->cycle_at_) >= this->update_interval_) {
     this->cycle_active_ = true;
     this->cycle_at_ = now;
@@ -462,14 +471,19 @@ void DuepiHub::schedule_(uint32_t now) {
   }
   if (uint32_t(now - this->runtime_at_) >= this->runtime_interval_) this->runtime_due_ = true;
   if (!this->cycle_active_ || !this->engine_.ready_to_poll()) return;
-  if (this->cursor_ == 5 && !this->read_power_level_) ++this->cursor_;
-  if (this->cursor_ >= (this->runtime_due_ ? 15 : 13)) {
-    this->cycle_active_ = false;
-    if (this->runtime_due_) this->runtime_at_ = now;
-    this->runtime_due_ = false;
+  size_t count = sizeof(ORDER) / sizeof(ORDER[0]) - (this->runtime_due_ ? 0 : 2);
+  while (this->cursor_ < count) {
+    Command command = ORDER[this->cursor_++];
+    if (command == Command::REQUESTED_POWER && !this->read_power_level_) continue;
+    if (command >= Command::FLUE_EXTRACTION_SPEED && command <= Command::CYCLE_TIME &&
+        (command == Command::CYCLE_TIME ? this->text_[9] == nullptr :
+         this->numeric_[static_cast<size_t>(command)] == nullptr)) continue;
+    this->engine_.enqueue({command}, now);
     return;
   }
-  this->engine_.enqueue({ORDER[this->cursor_++]}, now);
+  this->cycle_active_ = false;
+  if (this->runtime_due_) this->runtime_at_ = now;
+  this->runtime_due_ = false;
 }
 
 void DuepiHub::loop() {

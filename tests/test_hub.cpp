@@ -1499,7 +1499,76 @@ void deferred_off_tests() {
   std::cout << "PASS: queued OFF survives ignition ACK, permits prerequisite polling, expires and cancels on recovery\n";
 }
 
+void optional_diagnostic_tests() {
+  for (unsigned mode : {0U, 1U, 2U, 3U}) {
+    test_now = 0;
+    TestHub hub;
+    sensor::Sensor readings[4];
+    text_sensor::TextSensor cycle;
+    for (size_t index = 0; index < 4; ++index) {
+      if (mode == 3 || (mode == 1 && index == 0))
+        hub.set_numeric_sensor(static_cast<size_t>(Command::FLUE_EXTRACTION_SPEED) + index, &readings[index]);
+    }
+    if (mode == 2 || mode == 3) hub.set_text_sensor(9, &cycle);
+    hub.setup();
+    std::vector<std::string> expected = {
+        "RDC000", "RC4000", "RD9000", "RD1000", "RDA000", "RC5000", "RC6000",
+        "RD3000", "RD4000", "RD0000", "REF000", "RC0000", "RDF000"};
+    if (mode == 1 || mode == 3) expected.push_back("RD2000");
+    if (mode == 3) {
+      expected.push_back("RDB000");
+      expected.push_back("RDD000");
+      expected.push_back("RDE000");
+    }
+    if (mode == 2 || mode == 3) expected.push_back("RD8000");
+    expected.push_back("RED000");
+    expected.push_back("REE000");
+    for (unsigned pass : {0U, 1U}) {
+      if (pass == 1) test_now = 10000;
+      size_t before = hub.writes.size();
+      size_t count = expected.size() - (pass == 0 ? 0 : 2);
+      for (size_t index = 0; index < count; ++index) {
+        hub.poll();
+        CHECK(hub.writes.size() == before + index + 1);
+        CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == expected[index]);
+        const auto &command = expected[index];
+        const char *reply = command == "RDC000" ? "A06000" : command == "RD1000" ? "00D700" :
+                            command == "RC5000" ? "000300" : command == "RC6000" ? "001500" :
+                            command == "RD2000" ? "123400" : command == "RDB000" ? "020100" :
+                            command == "RDD000" ? "FE3300" : command == "RDE000" ? "7F4400" :
+                            command == "RD8000" ? "0A0B00" : "000000";
+        hub.receive(reply);
+        test_now += 100;
+      }
+      hub.poll();
+      CHECK(hub.writes.size() == before + count);
+    }
+    if (mode == 1 || mode == 3) CHECK(readings[0].state == 4660);
+    if (mode == 3) {
+      CHECK(readings[1].state == 513);
+      CHECK(readings[2].state == 254);
+      CHECK(readings[3].state == 127);
+    }
+    if (mode == 2 || mode == 3) {
+      CHECK(cycle.state == "10:11");
+      hub.observe(Command::CYCLE_TIME, 0x010200);
+      CHECK(cycle.state == "01:02");
+      hub.observe(Command::CYCLE_TIME, 0xFFFE00);
+      CHECK(cycle.state == "255:254");
+    }
+    test_now = 60000;
+    hub.publish();
+    if (mode == 1 || mode == 3) CHECK(std::isnan(readings[0].state));
+    if (mode == 3)
+      for (const auto &reading : readings) CHECK(std::isnan(reading.state));
+    if (mode == 2 || mode == 3) CHECK(cycle.state == "Stale");
+  }
+  test_now = 0;
+  std::cout << "PASS: optional diagnostic polling, byte/word decoding, cycle formatting, freshness and runtime ordering\n";
+}
+
 int main() {
+  optional_diagnostic_tests();
   power_preset_tests();
   power_feedback_tests();
   shutdown_tests();

@@ -104,6 +104,34 @@ void codec_tests() {
   CHECK(std::string(frame.begin() + 1, frame.begin() + 7) == "RC5000");
   CHECK(!is_write(Command::REQUESTED_POWER));
   CHECK(std::string(command_name(Command::REQUESTED_POWER)) == "power_level");
+  const struct {
+    Command command;
+    const char *payload;
+    const char *name;
+  } diagnostics[] = {
+      {Command::FLUE_EXTRACTION_SPEED, "RD2000", "flue_extraction_speed"},
+      {Command::EXTRACTION_SENSOR_LEVEL, "RDB000", "extraction_sensor_level"},
+      {Command::FLUE_MOTOR_CORRECTION, "RDD000", "flue_motor_correction"},
+      {Command::PELLET_CORRECTION, "RDE000", "pellet_correction"},
+      {Command::CYCLE_TIME, "RD8000", "cycle_time"},
+  };
+  for (const auto &diagnostic : diagnostics) {
+    CHECK(build_request({diagnostic.command}, frame));
+    CHECK(std::string(frame.begin() + 1, frame.begin() + 7) == diagnostic.payload);
+    CHECK(std::string(command_name(diagnostic.command)) == diagnostic.name);
+    CHECK(!is_write(diagnostic.command));
+    CHECK(!is_installer(diagnostic.command));
+    ObservedState observed;
+    CHECK(observed.update(diagnostic.command, Response{0x1234AB}, 10));
+    CHECK(observed.fresh(diagnostic.command, 10, 100));
+    CHECK(!observed.healthy(10, 100));
+    CHECK(!observed.fresh(diagnostic.command, 110, 100));
+    CHECK(!accepts({diagnostic.command}, Response{0, {}, false}));
+  }
+  CHECK(numeric_value(Command::FLUE_EXTRACTION_SPEED, 0x1234AB) == 4660);
+  CHECK(numeric_value(Command::EXTRACTION_SENSOR_LEVEL, 0x1234AB) == 4660);
+  CHECK(numeric_value(Command::FLUE_MOTOR_CORRECTION, 0xFE3300) == 254);
+  CHECK(numeric_value(Command::PELLET_CORRECTION, 0x7F4400) == 127);
   ObservedState power_state;
   CHECK(power_state.update(Command::REQUESTED_POWER, Response{0x000300}, 10));
   CHECK(power_state.fresh(Command::REQUESTED_POWER, 10, 100));

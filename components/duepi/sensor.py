@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import sensor
-from esphome.const import DEVICE_CLASS_TEMPERATURE, STATE_CLASS_MEASUREMENT, UNIT_CELSIUS
+from esphome.const import DEVICE_CLASS_TEMPERATURE, ENTITY_CATEGORY_DIAGNOSTIC, STATE_CLASS_MEASUREMENT, UNIT_CELSIUS
 from . import DuepiHub
 
 FIELDS = {
@@ -18,6 +18,16 @@ FIELDS = {
     "total_runtime_counter": (12, None, 0),
     "service_runtime_counter": (13, None, 0),
     "power_level": (14, None, 0),
+    "flue_extraction_speed": (15, None, 0),
+    "extraction_sensor_level": (16, None, 0),
+    "flue_motor_correction": (17, None, 0),
+    "pellet_correction": (18, None, 0),
+}
+
+DIAGNOSTIC_FIELDS = {
+    "phase_code", "d3000", "exhaust_speed", "alarm_code", "inputs_code", "pcb_temperature",
+    "total_runtime_counter", "service_runtime_counter", "flue_extraction_speed",
+    "extraction_sensor_level", "flue_motor_correction", "pellet_correction",
 }
 
 CONFIG_SCHEMA = cv.Schema(
@@ -27,6 +37,7 @@ CONFIG_SCHEMA = cv.Schema(
             cv.Optional(key): sensor.sensor_schema(
                 accuracy_decimals=decimals,
                 state_class=STATE_CLASS_MEASUREMENT,
+                **({"entity_category": ENTITY_CATEGORY_DIAGNOSTIC} if key in DIAGNOSTIC_FIELDS else {}),
                 **({"unit_of_measurement": unit} if unit is not None else {}),
                 **({"device_class": DEVICE_CLASS_TEMPERATURE} if unit == UNIT_CELSIUS else {}),
             )

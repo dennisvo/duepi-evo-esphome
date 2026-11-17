@@ -75,6 +75,9 @@ pin numbering, GPIO assignments and electrical levels for your hardware.
 
 ![Wiring reference](images/duepi-wiring-diagram.png)
 
+Current status: This is not yet confirmed to work. After testing with the Sparkfun something
+blocked the signals between the ESP32 and the stove. After directly plugging the tx/rx signals in the ESP32 (without the Sparkfun in between) things started to work. But since we are feeding 5V TTL signals into a 3.3V chip, this might damage the chip in the longer run.
+
 ### ESP Board Pinouts
 
 #### Seeed Studio XIAO ESP32-C3
