@@ -7,10 +7,10 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 VARIANTS = {
-    "read-only": ("false", "false"),
+    "standard": ("false", "false"),
     "controls": ("true", "false"),
     "installer": ("true", "true"),
-    "c6-read-only": ("false", "false"),
+    "c6-standard": ("false", "false"),
 }
 
 
@@ -30,16 +30,15 @@ def main():
         if name not in VARIANTS:
             raise SystemExit(f"Unknown variant: {name}; choose {', '.join(VARIANTS)}")
         config_path = destination / f"duepi-{name}.yaml"
-        writes, installer = VARIANTS[name]
-        example_name = "esp32-c6.yaml" if name == "c6-read-only" else "esp32-c3.yaml"
+        controls_enabled, installer = VARIANTS[name]
+        example_name = "esp32-c6.yaml" if name == "c6-standard" else "esp32-c3.yaml"
         example = (ROOT / "examples" / example_name).read_text(encoding="utf-8")
         assert "substitutions:" not in example and "${" not in example
         config = yaml.compose(example)
         field(field(config, "esphome"), "name").value = f"duepi-{name}"
         field(field(config, "external_components").value[0], "source").value = "../components"
-        field(field(config, "duepi"), "enable_writes").value = writes
         field(field(config, "duepi"), "enable_installer").value = installer
-        if writes == "true":
+        if controls_enabled == "true":
             controls = yaml.compose(yaml.safe_dump({
                 "number": [{"platform": "duepi", "duepi_id": "stove", "kind": "level",
                             "name": "Requested Controller Level (Unverified)", "mode": "box"}],

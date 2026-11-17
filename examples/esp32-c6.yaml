@@ -48,11 +48,9 @@ uart:
 duepi:
   id: stove
   uart_id: stove_uart
-  # Enable normal stove controls only after checking telemetry and wiring.
-  enable_writes: false
   enable_reset: false
   # true includes installer/custom/raw support; false excludes it from firmware.
-  # Requires enable_writes: true. Installer Access starts off in Home Assistant.
+  # Installer Access starts off in Home Assistant.
   enable_installer: false
   firmware_profile: auto
   min_temperature: 10

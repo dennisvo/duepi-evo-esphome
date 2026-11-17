@@ -78,7 +78,7 @@ bool DuepiHub::set_custom_enabled(bool value) {
 
 bool DuepiHub::privileged_ready_() const {
   uint32_t now = millis();
-  return this->policy_.enabled && this->sync_mask_ == 31 && this->state_.healthy(now, this->stale_after_) &&
+  return this->sync_mask_ == 31 && this->state_.healthy(now, this->stale_after_) &&
          this->state_.fresh(Command::FIRMWARE, now, this->stale_after_) &&
          this->state_.fresh(Command::BOARD, now, this->stale_after_) && !this->engine_.recovering();
 }

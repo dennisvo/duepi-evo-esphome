@@ -12,6 +12,7 @@ static const char *const TAG = "duepi";
 void DuepiHub::setup() {
   this->retained_target_ = NAN;
   this->retained_target_requested_ = false;
+  this->publish_requested_level_(0);
 #ifdef USE_DUEPI_INSTALLER
   this->installer_permission_.set_enabled(false);
   this->custom_permission_.set_enabled(false);
@@ -31,8 +32,8 @@ void DuepiHub::setup() {
     break;
   }
   this->publish_temperature_limits_();
-  ESP_LOGI(TAG, "Duepi startup: stove writes %s; target limits %u..%u C; initialization %s",
-           this->policy_.enabled ? "enabled" : "disabled", unsigned(this->min_temperature()),
+  ESP_LOGI(TAG, "Duepi startup: target limits %u..%u C; initialization %s",
+           unsigned(this->min_temperature()),
            unsigned(this->max_temperature()), this->init_command() ? "enabled" : "disabled");
   this->cycle_at_ = this->runtime_at_ = millis();
   for (auto *entity : this->numeric_) if (entity != nullptr) entity->publish_state(NAN);
@@ -45,7 +46,7 @@ void DuepiHub::setup() {
 }
 
 void DuepiHub::dump_config() {
-  ESP_LOGCONFIG(TAG, "Duepi hub; control writes %s", this->policy_.enabled ? "opted in" : "disabled");
+  ESP_LOGCONFIG(TAG, "Duepi hub");
   ESP_LOGCONFIG(TAG, "Poll: %lu ms; stale: %lu ms", static_cast<unsigned long>(this->update_interval_),
                 static_cast<unsigned long>(this->stale_after_));
   ESP_LOGCONFIG(TAG, "Response timeout: %lu ms; spacing: %lu ms; quiet: %lu ms",
@@ -72,6 +73,7 @@ void DuepiPrivilegeSwitch::write_state(bool value) {
 }
 
 void DuepiHub::recovery_started() {
+  this->publish_requested_level_(0);
   ESP_LOGD(TAG, "UART resynchronization: control prerequisites cleared; one-shot permissions disarmed");
   this->sync_mask_ = 0;
   this->verification_pending_ = false;
@@ -116,9 +118,9 @@ bool DuepiHub::may_transmit(const Request &request, uint32_t now) {
 #endif
           this->sync_mask_ == 31 && this->policy_.permits(request, this->state_, now, this->stale_after_));
   if (!permitted) {
-    ESP_LOGD(TAG, "%s blocked: writes=%u sync=0x%02X healthy=%u firmware_fresh=%u board_fresh=%u "
+    ESP_LOGD(TAG, "%s blocked: sync=0x%02X healthy=%u firmware_fresh=%u board_fresh=%u "
              "phase=0x%04lX alarm=%lu limits=%u..%u",
-             command_name(request.command), unsigned(this->policy_.enabled), unsigned(this->sync_mask_),
+             command_name(request.command), unsigned(this->sync_mask_),
              unsigned(this->state_.healthy(now, this->stale_after_)),
              unsigned(this->state_.fresh(Command::FIRMWARE, now, this->stale_after_)),
              unsigned(this->state_.fresh(Command::BOARD, now, this->stale_after_)),
@@ -310,6 +312,7 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
                   OUTCOMES[static_cast<size_t>(outcome)]);
     if (this->text_[4] != nullptr && request.token == this->token_) this->text_[4]->publish_state(buffer);
     if (outcome == Outcome::ACKNOWLEDGED) {
+      if (request.command == Command::SET_LEVEL) this->publish_requested_level_(request.argument);
       if (request.command == Command::SET_TARGET) {
         this->retained_target_ = request.argument;
         this->retained_target_requested_ = true;
@@ -332,7 +335,18 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
   }
 }
 
+void DuepiHub::publish_requested_level_(uint16_t level) {
+  if (this->climate_ != nullptr) this->climate_->publish_requested_level(level);
+  float value = level >= 1 && level <= 5 ? static_cast<float>(level) : NAN;
+  if (this->level_number_ != nullptr &&
+      (std::isfinite(value) ? this->level_number_->state != value : std::isfinite(this->level_number_->state)))
+    this->level_number_->publish_state(value);
+}
+
 void DuepiHub::publish_(uint32_t now) {
+  uint16_t phase = static_cast<uint16_t>(this->state_.fields[0].data >> 8);
+  if (!this->state_.healthy(now, this->stale_after_) || phase == 0 || ControlPolicy::shutdown_phase(phase))
+    this->publish_requested_level_(0);
   if (this->climate_ != nullptr)
     this->climate_->publish_observed(this->state_, now, this->stale_after_, this->retained_target_);
   if (this->text_[8] != nullptr) {

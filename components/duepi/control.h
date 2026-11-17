@@ -10,7 +10,6 @@ enum class FirmwareProfile : uint8_t { AUTO, FW_9200, FW_E670, FW_E693 };
 
 class ControlPolicy {
  public:
-  bool enabled{false};
   bool reset_enabled{false};
   uint16_t min_temperature{10};
   uint16_t max_temperature{25};
@@ -38,7 +37,7 @@ class ControlPolicy {
 
   bool permits(const Request &request, const ObservedState &state, uint32_t now, uint32_t lifetime) const {
     if (!is_write(request.command)) return true;
-    if (!this->enabled || !state.healthy(now, lifetime) ||
+    if (!state.healthy(now, lifetime) ||
         !state.fresh(Command::FIRMWARE, now, lifetime) || !state.fresh(Command::BOARD, now, lifetime)) return false;
     uint16_t phase = static_cast<uint16_t>(state.fields[0].data >> 8);
     if (!known_phase(phase) || shutdown_phase(phase)) return false;

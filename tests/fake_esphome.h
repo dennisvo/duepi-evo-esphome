@@ -115,12 +115,21 @@ class ClimateCall {
  public:
   std::optional<ClimateMode> mode;
   std::optional<float> target;
+  std::string custom_preset;
+  bool has_custom_preset() const { return !custom_preset.empty(); }
+  const std::string &get_custom_preset() const { return custom_preset; }
   const std::optional<ClimateMode> &get_mode() const { return mode; }
   const std::optional<float> &get_target_temperature() const { return target; }
 };
 class Climate {
  public:
   virtual ~Climate() = default;
+  template<size_t Size> void set_supported_custom_presets(const char *const (&presets)[Size]) {
+    supported_custom_presets.assign(presets, presets + Size);
+  }
+  std::vector<std::string> supported_custom_presets;
+  bool has_custom_preset() const { return !custom_preset_.empty(); }
+  const std::string &get_custom_preset() const { return custom_preset_; }
   float current_temperature{NAN};
   float target_temperature{NAN};
   ClimateMode mode{CLIMATE_MODE_OFF};
@@ -128,6 +137,13 @@ class Climate {
   size_t publications{0};
   void publish_state() { ++publications; }
  protected:
+  std::string custom_preset_;
+  bool set_custom_preset_(const char *preset) {
+    if (custom_preset_ == preset) return false;
+    custom_preset_ = preset;
+    return true;
+  }
+  void clear_custom_preset_() { custom_preset_.clear(); }
   virtual ClimateTraits traits() = 0;
   virtual void control(const ClimateCall &) = 0;
 };

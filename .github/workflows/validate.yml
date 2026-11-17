@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       compile_firmware:
-        description: Compile read-only, controls and installer variants without upload
+        description: Compile standard, optional-control and installer variants without upload
         type: boolean
         default: false
 

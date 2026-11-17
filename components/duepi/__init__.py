@@ -33,8 +33,6 @@ def validate_timings(config):
         raise cv.Invalid("min_temperature must be less than max_temperature")
     if config["stale_after"] <= config["update_interval"]:
         raise cv.Invalid("stale_after must exceed update_interval")
-    if not config["enable_writes"] and any(config[key] for key in ("enable_installer", "enable_reset")):
-        raise cv.Invalid("operator features require enable_writes")
     if config["enable_installer"]:
         from .installer import entity_config
 
@@ -46,7 +44,6 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(DuepiHub),
-            cv.Optional("enable_writes", default=False): cv.boolean,
             cv.Optional("enable_reset", default=False): cv.boolean,
             cv.Optional("init_command", default=False): cv.boolean,
             cv.Optional("min_temperature", default=10): cv.int_range(min=10, max=35),
@@ -79,7 +76,6 @@ async def to_code(config):
     hub = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(hub, config)
     await uart.register_uart_device(hub, config)
-    cg.add(hub.set_enable_writes(config["enable_writes"]))
     cg.add(hub.set_enable_reset(config["enable_reset"]))
     cg.add(hub.set_init_command(config["init_command"]))
     cg.add(hub.set_min_temperature(config["min_temperature"]))

@@ -284,9 +284,8 @@ void control_tests() {
   for (Command command : {Command::PHASE, Command::ROOM, Command::ALARM, Command::FIRMWARE, Command::BOARD}) {
     CHECK(state.update(command, {command == Command::FIRMWARE ? 0x920000U : 0U}, 100));
   }
-  CHECK(!policy.permits({Command::OFF}, state, 100, 45000));
+  CHECK(policy.permits({Command::OFF}, state, 100, 45000));
   CHECK(!policy.permits({Command::START_GENERIC}, state, 100, 45000));
-  policy.enabled = true;
   CHECK(policy.start_request(state, request));
   CHECK(request.command == Command::START_9200);
   CHECK(policy.permits(request, state, 100, 45000));

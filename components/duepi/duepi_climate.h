@@ -12,7 +12,9 @@ class DuepiHub;
 
 class DuepiClimate : public climate::Climate {
  public:
+  DuepiClimate();
   void set_parent(DuepiHub *parent) { this->parent_ = parent; }
+  void publish_requested_level(uint16_t level);
   void publish_observed(const ObservedState &state, uint32_t now, uint32_t lifetime, float retained_target = NAN);
  protected:
   climate::ClimateTraits traits() override;

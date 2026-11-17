@@ -33,7 +33,6 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   void set_numeric_sensor(size_t index, sensor::Sensor *entity) { this->numeric_[index] = entity; }
   void set_text_sensor(size_t index, text_sensor::TextSensor *entity) { this->text_[index] = entity; }
   void set_communication_sensor(binary_sensor::BinarySensor *entity) { this->communication_ = entity; }
-  void set_enable_writes(bool value) { this->policy_.enabled = value; }
   void set_enable_reset(bool value) { this->policy_.reset_enabled = value; }
   void set_min_temperature(uint16_t value) { this->policy_.min_temperature = value; }
   void set_max_temperature(uint16_t value) { this->policy_.max_temperature = value; }
@@ -47,6 +46,7 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   bool init_command() const { return this->engine_.init_command; }
   void set_firmware_profile(FirmwareProfile value) { this->policy_.profile = value; }
   void set_climate(DuepiClimate *entity) { this->climate_ = entity; }
+  void set_level_number(DuepiLevel *entity) { this->level_number_ = entity; }
   bool request_off();
   bool request_start();
   bool request_target(float value);
@@ -97,6 +97,7 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   void publish_(uint32_t now);
   void schedule_(uint32_t now);
   void publish_temperature_limits_();
+  void publish_requested_level_(uint16_t level);
   uint32_t lifetime_(size_t index) const;
   struct TemperatureLimits {
     uint16_t minimum;
@@ -109,6 +110,7 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   ObservedState state_;
   ControlPolicy policy_;
   DuepiClimate *climate_{nullptr};
+  DuepiLevel *level_number_{nullptr};
   uint8_t sync_mask_{0};
   uint32_t token_{0};
   Request verification_{};

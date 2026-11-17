@@ -24,10 +24,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(version("ziglang"), "0.15.2")
         self.assertEqual(version("cbor2"), "6.1.2")
 
-    def test_read_only_defaults(self):
+    def test_feature_defaults(self):
         config = self.config()
-        for key in ("enable_writes", "enable_reset", "enable_installer", "init_command"):
+        for key in ("enable_reset", "enable_installer", "init_command"):
             self.assertFalse(config[key])
+        self.assertNotIn("enable_writes", config)
         self.assertNotIn("_installer_entities", config)
 
     def test_single_stove_configuration(self):
@@ -36,7 +37,8 @@ class ConfigTests(unittest.TestCase):
             duepi.CONFIG_SCHEMA([{"id": "stove"}, {"id": "second_stove"}])
 
     def test_installer_entities_only_when_included(self):
-        config = self.config(enable_writes=True, enable_installer=True)
+        config = self.config(enable_installer=True)
+        self.assertFalse(config["enable_reset"])
         entities = config["_installer_entities"]
         self.assertEqual(set(entities), {"api", "access", "parameter", "value", "read", "write", "result", "response"})
         self.assertEqual(entities["access"]["restore_mode"], "ALWAYS_OFF")
@@ -52,16 +54,15 @@ class ConfigTests(unittest.TestCase):
     def test_old_advanced_flags_rejected(self):
         for key in ("enable_custom_commands", "enable_raw_commands"):
             with self.subTest(key=key), self.assertRaises(cv.Invalid):
-                self.config(enable_writes=True, **{key: True})
+                self.config(**{key: True})
 
     def test_invalid_freshness(self):
         with self.assertRaises(cv.Invalid):
             self.config(stale_after="10s", update_interval="10s")
 
-    def test_initialization_without_writes(self):
+    def test_initialization_configuration(self):
         config = self.config(init_command=True)
         self.assertTrue(config["init_command"])
-        self.assertFalse(config["enable_writes"])
 
     def test_initialization_switch_rejected(self):
         schema = importlib.import_module("duepi.switch").CONFIG_SCHEMA
@@ -93,30 +94,24 @@ class ConfigTests(unittest.TestCase):
 
     def test_control_entity_feature_dependencies(self):
         reset = importlib.import_module("duepi.button")
-        for writes, enabled in ((False, False), (True, False), (True, True)):
-            parent = self.config(enable_writes=writes, enable_reset=enabled)
+        for enabled in (False, True):
+            parent = self.config(enable_reset=enabled)
             full_config = Mock()
             full_config.get_path_for_id.return_value = ["duepi", "id"]
             full_config.get_config_for_path.return_value = parent
             token = fv.full_config.set(full_config)
             try:
-                suffix = f"{writes} {enabled}"
+                suffix = str(enabled)
                 button = reset.CONFIG_SCHEMA({"name": f"Reset {suffix}", "duepi_id": "stove"})
-                level = duepi_number.CONFIG_SCHEMA({"name": f"Level {suffix}", "duepi_id": "stove"})
                 if enabled:
                     reset.FINAL_VALIDATE_SCHEMA(button)
                 else:
                     with self.assertRaisesRegex(cv.Invalid, "enable_reset"):
                         reset.FINAL_VALIDATE_SCHEMA(button)
-                if writes:
-                    duepi_number.FINAL_VALIDATE_SCHEMA(level)
-                else:
-                    with self.assertRaisesRegex(cv.Invalid, "enable_writes"):
-                        duepi_number.FINAL_VALIDATE_SCHEMA(level)
-                for kind in ("min_temperature", "max_temperature"):
-                    duepi_number.FINAL_VALIDATE_SCHEMA(duepi_number.CONFIG_SCHEMA({
+                for kind in ("level", "min_temperature", "max_temperature"):
+                    duepi_number.CONFIG_SCHEMA({
                         "name": f"{kind} {suffix}", "kind": kind, "duepi_id": "stove",
-                    }))
+                    })
             finally:
                 fv.full_config.reset(token)
 
@@ -151,12 +146,15 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(cv.Invalid):
             self.config(firmware_profile="guess")
 
-    def test_privilege_dependencies(self):
-        for key in ("enable_reset", "enable_installer"):
-            with self.subTest(key=key), self.assertRaises(cv.Invalid):
-                self.config(**{key: True})
-        with self.assertRaises(cv.Invalid):
-            self.config(enable_writes=True, enable_raw_commands=True)
+    def test_independent_reset_opt_in(self):
+        config = self.config(enable_reset=True)
+        self.assertTrue(config["enable_reset"])
+        self.assertFalse(config["enable_installer"])
+
+    def test_removed_write_setting_rejected(self):
+        for value in (False, True):
+            with self.subTest(value=value), self.assertRaises(cv.Invalid):
+                self.config(enable_writes=value)
 
     def test_actions_registered_before_codegen(self):
         for name in duepi.DUEPI_ACTIONS:

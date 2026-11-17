@@ -5,9 +5,8 @@ to Home Assistant using an ESP32 and the controller's UART interface. Monitor
 temperatures, operating state and alarms, with optional controls for HEAT/OFF,
 target temperature and controller level.
 
-The example starts in read-only mode. Normal controls and advanced installer/custom
-commands must be explicitly enabled. The stove retains regulation; this component
-is not a thermostat or a certified safety controller.
+Alarm reset and advanced installer/custom commands must be explicitly enabled. The stove
+retains regulation; this component is not a thermostat or a certified safety controller.
 
 Inspired by [mvroosmalen's ESPHome-Duepi work](https://github.com/mvroosmalen1970/ESPHome-Duepi),
 this project implements the protocol as a native C++ ESPHome component.
@@ -81,7 +80,7 @@ between ESP boards and pellet stoves, those reports do not establish
 electrical safety. ESP32 GPIO expects 3.3 V logic and is not 5 V tolerant, so a
 suitable 5 V / 3.3 V UART logic-level shifter is advisable to avoid damaging the
 ESP32 input. Verify the levels and wiring on your particular controller before
-connecting, and start with read-only operation.
+connecting, and verify telemetry before issuing commands.
 
 ### Installation
 
@@ -102,14 +101,16 @@ connecting, and start with read-only operation.
 4. Validate and compile the configuration in ESPHome, then install it on the ESP32.
 	Add the device through Home Assistant's ESPHome integration using the same API
 	encryption key. Verify communication
-	health and readings before enabling any controls.
+	health and readings before using any controls.
 
 ## Hub Configuration
 
-The example includes telemetry and normal control entities but starts read-only.
-Under `duepi:`, set `enable_writes: true` to allow normal controls. Alarm reset
-additionally requires `enable_reset: true`; advanced commands require
-`enable_installer: true`. All three flags default to false.
+The examples include telemetry and normal control entities. Normal controls need
+no write-enable setting. Alarm reset requires `enable_reset: true`; advanced
+commands require `enable_installer: true`. Both flags default to false and are
+independent. Remove the obsolete `enable_writes` option from existing YAML;
+normal controls are now available without it, including configurations that
+previously used `enable_writes: false`.
 
 Enabling installer support includes its controls and API actions in the firmware
 and generates one **Installer Access** switch. Access always starts off after
@@ -140,7 +141,7 @@ target. A valid target read from the stove remains visible outside these limits.
 The example exposes **Minimum Target Temperature** and **Maximum Target
 Temperature** under Configuration on the Home Assistant device page; see
 [the configuration example](examples/esp32-c3.yaml) for their YAML definitions.
-They work with stove writes disabled and obey the same limits as YAML. To move
+They send no stove commands and obey the same limits as YAML. To move
 both limits past an existing boundary, expand the range first. Rejected changes
 leave both previous values intact.
 
@@ -161,7 +162,7 @@ initialization times out, the unsent command is cancelled rather than replayed.
 
 Set `init_command: true` and rebuild to opt into this mode. Remove any previous
 `platform: duepi`, `kind: initialization` switch from your YAML. This setting
-works with writes disabled. It does not reset alarms, reboot the stove or start ignition.
+only adds initialization before existing transactions. It does not reset alarms, reboot the stove or start ignition.
 See [Queue and Recovery](docs/ARCHITECTURE.md#queue-and-recovery) for sequencing details.
 
 ### Polling and Timeouts
@@ -181,13 +182,23 @@ poll cycle and missed optional replies.
 
 ## Normal Controls
 
-The example includes climate HEAT/OFF and whole-Celsius targets (10..25 by default).
-Controls remain blocked until `enable_writes: true` is configured and the firmware
-is rebuilt. First check communication and readings with writes disabled.
+The example includes climate HEAT/OFF, whole-Celsius targets (10..25 by default)
+and the presets **Power level 1** through **Power level 5**.
+Normal controls are available without an opt-in. First check communication and
+readings before issuing commands.
 
-The optional controller-level number sends a level request (1..5); it is not a
-switch or measured feedback. Its displayed value is only the last request, not a
-verified stove setting. Add it only with `enable_writes: true`:
+Select power directly from the climate entity's preset selector in Home Assistant;
+no extra YAML entity is needed. A preset sends only a level request: it does not
+start the stove or change its target temperature. Level changes require a heating
+phase. The selected preset updates only after acknowledgement, not when queued;
+it is an acknowledged request, not verified power feedback. Failed or cancelled
+requests do not select a new level. The selection clears on reboot, UART recovery,
+stale core telemetry, observed Off or ordinary shutdown, and is never restored or
+replayed. Physical-panel changes are not reliably reflected by this selector.
+
+The optional controller-level number remains available for existing dashboards.
+It shares the same acknowledged, unverified value and clearing rules as the
+climate presets; it is not an independent setting. Add it only if needed:
 
 ```yaml
 number:
@@ -198,8 +209,8 @@ number:
     mode: box
 ```
 
-The optional reset button requires both `enable_writes: true` and
-`enable_reset: true` on the hub. Adding it while reset is disabled is a configuration
+The optional reset button requires `enable_reset: true` on the hub.
+Adding it while reset is disabled is a configuration
 error. Reset is never automatic. Omit this entire entry when reset is disabled:
 
 ```yaml
@@ -288,7 +299,7 @@ readback rules and response-correlation limits.
 ## Installer and Custom Commands
 
 Installer support includes parameter reads/writes and custom/raw
-commands. Enable it with `enable_installer: true` and `enable_writes: true`
+commands. Enable it with `enable_installer: true`
 under `duepi:`, then rebuild. Without this opt-in none of the advanced
 entities, actions or command implementation are included. When included, all
 advanced operations share **Installer Access**, which is off after every boot;
@@ -342,7 +353,7 @@ not verification of physical operation.
 
 | Automation action | Fields besides `id: stove` | Required configuration/runtime state |
 | --- | --- | --- |
-| `duepi.installer_read` | `parameter` integer 0..255 | `enable_writes`, `enable_installer`, Installer Access on, fresh observations |
+| `duepi.installer_read` | `parameter` integer 0..255 | `enable_installer`, Installer Access on, fresh observations |
 | `duepi.installer_write` | `parameter`, `value` integers 0..255 | Same, observed off; authorization automatic |
 | `duepi.send_command` | `command` four hex characters | Same access/freshness requirements; authorization automatic, off not required |
 | `duepi.send_raw` | `command` six uppercase alphanumeric characters | Same as `duepi.send_command` |

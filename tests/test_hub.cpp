@@ -59,6 +59,103 @@ class TestInstallerSwitch : public DuepiPrivilegeSwitch {
 };
 #endif
 
+class TestClimate : public DuepiClimate {
+ public:
+  using DuepiClimate::control;
+};
+
+class TestLevel : public DuepiLevel {
+ public:
+  using DuepiLevel::control;
+};
+
+void power_preset_tests() {
+  for (uint16_t level = 1; level <= 5; ++level) {
+    test_now = 0;
+    TestHub hub;
+    TestClimate climate;
+    TestLevel number;
+    climate.set_parent(&hub);
+    number.set_parent(&hub);
+    hub.set_climate(&climate);
+    hub.set_level_number(&number);
+    hub.setup();
+    CHECK(climate.supported_custom_presets == std::vector<std::string>({
+        "Power level 1", "Power level 2", "Power level 3", "Power level 4", "Power level 5"}));
+    CHECK(!climate.has_custom_preset());
+    CHECK(std::isnan(number.state));
+    climate::ClimateCall call;
+    call.custom_preset = "Power level " + std::to_string(level);
+    climate.control(call);
+    CHECK(hub.queued() == 0);
+    hub.synchronize();
+    climate.control(call);
+    CHECK(hub.queued() == 0);
+    CHECK(hub.writes.empty());
+    CHECK(climate.mode == climate::CLIMATE_MODE_OFF);
+    hub.observe(Command::PHASE, 0x020100);
+    hub.observe(Command::TARGET, 0x001500);
+    climate.control(call);
+    CHECK(hub.queued() == 1);
+    CHECK(!climate.has_custom_preset());
+    CHECK(std::isnan(number.state));
+    CHECK(climate.target_temperature == 21);
+    hub.tick();
+    CHECK(hub.writes.size() == 1);
+    CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) ==
+          "RF00" + std::to_string(level) + "0");
+    CHECK(!climate.has_custom_preset());
+    test_now = 1;
+    hub.receive("000000");
+    CHECK(climate.get_custom_preset() == call.custom_preset);
+    CHECK(number.state == level);
+    CHECK(climate.target_temperature == 21);
+    hub.observe(Command::D3000, 0x000900);
+    CHECK(climate.get_custom_preset() == call.custom_preset);
+    for (Outcome outcome : {Outcome::QUEUED, Outcome::SENT, Outcome::REJECTED,
+                            Outcome::CANCELLED, Outcome::INDETERMINATE, Outcome::TIMED_OUT}) {
+      hub.report({Command::SET_LEVEL, static_cast<uint16_t>(level == 5 ? 1 : level + 1)}, outcome);
+      CHECK(climate.get_custom_preset() == call.custom_preset);
+      CHECK(number.state == level);
+    }
+    climate::ClimateCall invalid;
+    invalid.custom_preset = "Power level 6";
+    climate.control(invalid);
+    CHECK(hub.queued() == 0);
+    CHECK(climate.get_custom_preset() == call.custom_preset);
+    if (level == 1) {
+      hub.observe(Command::PHASE, 0);
+    } else if (level == 2) {
+      climate.control(call);
+      hub.observe(Command::PHASE, 0x030100);
+      CHECK(hub.queued() == 0);
+    } else if (level == 3) {
+      test_now = 45001;
+      hub.publish();
+    } else if (level == 4) {
+      hub.recover();
+    } else {
+      number.control(2);
+      CHECK(number.state == 5);
+      test_now = 101;
+      hub.tick();
+      hub.receive("000000");
+      CHECK(number.state == 2);
+      CHECK(climate.get_custom_preset() == "Power level 2");
+      climate.control(call);
+      test_now = 201;
+      hub.tick();
+      test_now = 1001;
+      hub.tick();
+      CHECK(hub.writes.size() == 3);
+    }
+    CHECK(!climate.has_custom_preset());
+    CHECK(std::isnan(number.state));
+  }
+  test_now = 0;
+  std::cout << "PASS: climate Power level 1..5, ACK-only shared state, rejection, cancellation, timeout, shutdown, stale and recovery\n";
+}
+
 void normal_tests() {
   TestHub hub;
   DuepiClimate climate;
@@ -76,6 +173,7 @@ void normal_tests() {
   CHECK(std::isnan(climate.current_temperature));
   CHECK(std::isnan(target.state));
   CHECK(last_response.state == "Unknown");
+  CHECK(!hub.request_start());
   hub.synchronize();
   CHECK(last_response.state == "0d 00h 00m 00s");
   test_now = 90061000;
@@ -91,9 +189,7 @@ void normal_tests() {
   size_t published = climate.publications;
   hub.publish();
   CHECK(climate.publications == published);
-  CHECK(!hub.request_start());
   CHECK(hub.writes.empty());
-  hub.set_enable_writes(true);
   CHECK(hub.request_target(24));
   CHECK(hub.request_target(25));
   hub.tick();
@@ -138,7 +234,6 @@ void normal_tests() {
     text_sensor::TextSensor outcome;
     starting.set_text_sensor(4, &outcome);
     starting.setup();
-    starting.set_enable_writes(true);
     CHECK(!starting.request_start());
     CHECK(starting.writes.empty());
     starting.synchronize();
@@ -178,7 +273,6 @@ void target_feedback_tests() {
   hub.setup();
   CHECK(std::isnan(climate.target_temperature));
   CHECK(source.state == "Unknown");
-  hub.set_enable_writes(true);
   hub.synchronize();
   hub.read_target();
   test_now = 1;
@@ -246,7 +340,6 @@ void target_feedback_tests() {
     timed_out.set_climate(&timed_out_climate);
     timed_out.set_text_sensor(8, &source);
     timed_out.setup();
-    timed_out.set_enable_writes(true);
     timed_out.synchronize();
     if (writing) {
       CHECK(timed_out.request_target(23));
@@ -267,7 +360,6 @@ void target_feedback_tests() {
 #ifdef USE_DUEPI_INSTALLER
 void prepare_installer(TestHub &hub) {
   hub.setup();
-  hub.set_enable_writes(true);
   hub.set_enable_installer(true);
   CHECK(hub.set_installer_enabled(true));
   hub.synchronize();
@@ -300,7 +392,6 @@ void installer_tests() {
   }
   TestHub access;
   access.setup();
-  access.set_enable_writes(true);
   access.set_enable_installer(true);
   access.set_enable_custom_commands(true);
   access.set_enable_raw_commands(true);
@@ -651,7 +742,6 @@ void custom_tests() {
   hub.set_climate(&climate);
   hub.set_text_sensor(6, &custom);
   hub.setup();
-  hub.set_enable_writes(true);
   hub.synchronize();
   CHECK(!hub.arm_custom_command());
   hub.set_enable_custom_commands(true);
@@ -705,7 +795,6 @@ void verification_expiry_test() {
   text_sensor::TextSensor status;
   hub.set_text_sensor(4, &status);
   hub.setup();
-  hub.set_enable_writes(true);
   hub.synchronize();
   CHECK(hub.request_target(20));
   hub.tick();
@@ -723,7 +812,6 @@ void temperature_limit_tests() {
   climate.set_parent(&hub);
   hub.set_climate(&climate);
   hub.setup();
-  hub.set_enable_writes(true);
   hub.synchronize();
   CHECK(hub.min_temperature() == 10 && hub.max_temperature() == 25);
   CHECK(!hub.request_target(26));
@@ -752,7 +840,6 @@ void initialization_hub_tests() {
   hub.setup();
   CHECK(!hub.init_command());
   hub.set_init_command(true);
-  hub.set_enable_writes(true);
   hub.synchronize();
   CHECK(hub.request_target(20));
   hub.tick();
@@ -801,7 +888,6 @@ void runtime_temperature_limit_tests() {
   CHECK(!hub.change_temperature_limit(false, 12));
   CHECK(hub.min_temperature() == 12 && hub.max_temperature() == 30);
   CHECK(hub.writes.empty());
-  hub.set_enable_writes(true);
   hub.synchronize();
   CHECK(!hub.request_target(11));
   CHECK(hub.request_target(29));
@@ -884,7 +970,6 @@ void logging_tests() {
   hub.observe(Command::ALARM, 0);
   hub.observe(Command::ROOM, 0x00D800);
   CHECK(count_logs("INFO", "") == initial_info);
-  hub.set_enable_writes(true);
   CHECK(hub.request_target(20));
   hub.tick();
   CHECK(count_logs("INFO", "set_target #1: sent") == 1);
@@ -987,7 +1072,6 @@ void shutdown_tests() {
       text_sensor::TextSensor status;
       hub.set_text_sensor(4, &status);
       hub.setup();
-      hub.set_enable_writes(true);
       hub.set_enable_reset(true);
       hub.set_init_command(initialization);
       hub.synchronize();
@@ -1029,7 +1113,6 @@ void shutdown_tests() {
   text_sensor::TextSensor status;
   redundant.set_text_sensor(4, &status);
   redundant.setup();
-  redundant.set_enable_writes(true);
   redundant.synchronize();
   redundant.observe(Command::PHASE, 0x020100);
   CHECK(redundant.request_off());
@@ -1046,7 +1129,6 @@ void shutdown_tests() {
   TestHub send_time;
   send_time.set_text_sensor(4, &status);
   send_time.setup();
-  send_time.set_enable_writes(true);
   send_time.synchronize();
   CHECK(send_time.request_target(22));
   send_time.cache_phase(0x0301);
@@ -1058,7 +1140,6 @@ void shutdown_tests() {
     test_now = 0;
     TestHub eco;
     eco.setup();
-    eco.set_enable_writes(true);
     eco.synchronize();
     CHECK(eco.request_target(22));
     eco.observe(Command::PHASE, static_cast<uint32_t>(phase) << 8);
@@ -1141,7 +1222,6 @@ void deferred_off_tests() {
     test_now = 0;
     TestHub hub;
     hub.setup();
-    hub.set_enable_writes(true);
     hub.set_init_command(initialization);
     hub.synchronize();
     CHECK(hub.request_start());
@@ -1197,7 +1277,6 @@ void deferred_off_tests() {
     text_sensor::TextSensor status;
     hub.set_text_sensor(4, &status);
     hub.setup();
-    hub.set_enable_writes(true);
     hub.synchronize();
     CHECK(hub.request_start());
     hub.tick();
@@ -1227,6 +1306,7 @@ void deferred_off_tests() {
 }
 
 int main() {
+  power_preset_tests();
   shutdown_tests();
   deferred_off_tests();
   normal_tests();

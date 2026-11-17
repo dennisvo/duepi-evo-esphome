@@ -124,6 +124,14 @@ distinguishes fresh reports, retained readings, acknowledged requests and unknow
 values. Both retained sources are unverified, never persisted or replayed.
 Rejected, cancelled and indeterminate writes cannot update the retained value.
 
+Climate custom presets `Power level 1` through `Power level 5` use the shared
+level-request entry point. They never imply ignition or a temperature change.
+Only a level ACK updates the selected preset and optional legacy level number;
+neither is verified feedback or derived from the D3000 sensor. Rejected, cancelled
+and indeterminate requests do not select a new value. The selection clears on
+UART recovery, stale core telemetry, observed Off or ordinary shutdown. It starts
+unknown after reboot; no preset is restored or replayed.
+
 Semantic controls validate at enqueue and actual send. Each explicit installer
 write or custom/raw send creates its own internal one-shot authorization and
 reserves a single token with a monotonic expiry; actual send consumes it. All
@@ -143,9 +151,9 @@ and native API actions when API is configured. Without the define, advanced hub
 methods, permission state, protocol builders and automation implementation are
 excluded by the preprocessor. Initialization remains independent. When included,
 one Installer Access switch controls both permission paths and always starts off;
-neither access nor command arming is restored from preferences. One example
-contains the normal entities, with `enable_writes` and `enable_installer` set
-directly on the hub; enabling runtime access never sends a stove command itself.
+neither access nor command arming is restored from preferences. The examples
+contain the normal entities. Reset and installer support remain independent
+hub opt-ins; enabling runtime access never sends a stove command itself.
 
 The hub's configurable whole-Celsius command range defaults to 10..25, bounded
 within the supported protocol range 10..35. It drives both control policy and
@@ -155,7 +163,7 @@ command range remain visible. There is no automatic alarm reset or fallback
 target presented as a controller observation.
 
 Optional minimum/maximum configuration numbers update this policy without using
-the transaction engine, even with stove writes disabled. The hub validates finite
+the transaction engine. The hub validates finite
 whole degrees and the complete ordered pair, republishes accepted values after
 rejection, and stores the pair in one ESPHome entity preference. Setup restores
 only a valid pair, otherwise retaining YAML defaults. Preference writes follow
@@ -202,9 +210,9 @@ synthetic/derived, not hardware captures. Schema tests cover configuration
 validation and action registration.
 
 The [validation runner](../tests/validate_examples.py) accepts `config` or
-`compile`, optionally followed by `read-only`, `controls` or `installer`.
-Without a variant argument it checks all three. It creates temporary variants of
-the single example using the current local component source and public dummy
+`compile`, optionally followed by `standard`, `controls`, `installer` or `c6-standard`.
+Without a variant argument it checks all four. It creates temporary variants of
+the C3 and C6 examples using the current local component source and public dummy
 secrets. Logs and binaries stay under ignored `.validation-build`; the runner
 never uploads, and its binaries must not be deployed. Compilation checks the
 generated source, defines and ELF for installer inclusion/exclusion.
