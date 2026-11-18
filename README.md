@@ -519,6 +519,8 @@ Lower priority:
 
 - [ ] Evaluate the newer app's local standby-power preference and establish
 	resume behavior before considering equivalent functionality.
+- [ ] Add support for an external temperature sensor to replace the inaccurate
+	internal room temperature sensor.
 
 ## Thanks
 

@@ -44,6 +44,9 @@ precautions below before following the diagram.
 
 See below for detailed pinout and hardware references on ESP32 and the Sparfun.
 
+**Current status**: This is not yet confirmed to work. After testing with the Sparkfun something
+blocked the signals between the ESP32 and the stove. After directly plugging the tx/rx signals in the ESP32 (without the Sparkfun in between) things started to work. But since we are feeding 5V TTL signals into a 3.3V chip, this might damage the chip in the longer run.
+
 **Please note:** do not connect the ESP32 both to the stove and USB at the same time, to prevent damage to your pc and the stove! Only connect
 it to USB for initial flashing and then disconnect.
 
@@ -74,9 +77,6 @@ pin numbering, GPIO assignments and electrical levels for your hardware.
 ### Duepi Controller Wiring Reference
 
 ![Wiring reference](images/duepi-wiring-diagram.png)
-
-Current status: This is not yet confirmed to work. After testing with the Sparkfun something
-blocked the signals between the ESP32 and the stove. After directly plugging the tx/rx signals in the ESP32 (without the Sparkfun in between) things started to work. But since we are feeding 5V TTL signals into a 3.3V chip, this might damage the chip in the longer run.
 
 ### ESP Board Pinouts
 
