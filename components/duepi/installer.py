@@ -32,7 +32,7 @@ def entity_config(hub_id):
             {"id": f"{hub_id}_installer_{key}", "name": name}
         )
     for key, name, category in (
-        ("result", "Installer Result", "config"),
+        ("result", "Installer Result", "diagnostic"),
         ("response", "Custom Response Data", "diagnostic"),
     ):
         values[key] = text_sensor.text_sensor_schema()(

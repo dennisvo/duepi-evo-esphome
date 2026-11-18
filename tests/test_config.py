@@ -93,8 +93,6 @@ class ConfigTests(unittest.TestCase):
             with self.subTest(key=key):
                 if key in ("phase", "alarm"):
                     self.assertFalse(config[key].get("entity_category"))
-                elif key == "installer":
-                    self.assertEqual(config[key]["entity_category"], "config")
                 else:
                     self.assertEqual(config[key]["entity_category"], "diagnostic")
 
@@ -143,8 +141,9 @@ class ConfigTests(unittest.TestCase):
                 "Installer Result",
             ],
         )
-        for key in ("access", "parameter", "value", "read", "write", "result"):
+        for key in ("access", "parameter", "value", "read", "write"):
             self.assertEqual(entities[key]["entity_category"], "config")
+        self.assertEqual(entities["result"]["entity_category"], "diagnostic")
         self.assertEqual(entities["response"]["entity_category"], "diagnostic")
 
     def test_arming_is_not_user_facing(self):

@@ -302,8 +302,8 @@ Default Home Assistant Organization:
 | --- | --- |
 | Sensors | Room/target temperatures, Power, Auger Level, phase and alarm text |
 | Controls | Climate, optional power-level number and alarm-reset button |
-| Configuration | Target-temperature limits, installer access/parameter tools and Installer Result |
-| Diagnostics | Flue/PCB temperatures, fan/exhaust speeds, runtime counters, communication, raw codes, identity, transaction result, target source, last response, Custom Response Data and the five optional readings below |
+| Configuration | Target-temperature limits and installer access/parameter tools |
+| Diagnostics | Flue/PCB temperatures, fan/exhaust speeds, runtime counters, communication, raw codes, identity, transaction result, target source, last response, Installer Result, Custom Response Data and the five optional readings below |
 
 These are component schema defaults. For entities declared in your YAML,
 override with `entity_category`; `entity_category: ""` restores normal placement.
