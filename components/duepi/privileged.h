@@ -5,7 +5,7 @@
 #include "esphome/core/component.h"
 #include "esphome/components/number/number.h"
 #include "esphome/components/button/button.h"
-#ifdef USE_API
+#if defined(USE_API) && defined(USE_API_CUSTOM_SERVICES)
 #include "esphome/components/api/custom_api_device.h"
 #endif
 #endif
@@ -24,6 +24,16 @@ class DuepiPrivilegeSwitch : public switch_::Switch {
 };
 
 #ifdef USE_DUEPI_INSTALLER
+class DuepiStandbySwitch : public switch_::Switch {
+ public:
+  void set_parent(DuepiHub *parent) { this->parent_ = parent; }
+  void publish_observed(bool value) { this->known_ = true; this->publish_state(value); }
+ protected:
+  void write_state(bool value) override;
+  DuepiHub *parent_{nullptr};
+  bool known_{false};
+};
+
 class DuepiInstallerValue : public number::Number {
  protected:
   void control(float value) override;
@@ -39,7 +49,7 @@ class DuepiInstallerButton : public button::Button {
   uint8_t operation_{0};
 };
 
-#ifdef USE_API
+#if defined(USE_API) && defined(USE_API_CUSTOM_SERVICES)
 class DuepiInstallerAPI : public Component, public api::CustomAPIDevice {
  public:
   void set_parent(DuepiHub *parent) { this->parent_ = parent; }

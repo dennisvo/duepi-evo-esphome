@@ -39,9 +39,11 @@ void DuepiClimate::control(const climate::ClimateCall &call) {
     while (level <= 5 && call.get_custom_preset() != POWER_PRESETS[level - 1]) ++level;
     if (level > 5) {
       this->parent_->reject_control("Invalid requested power preset");
+      this->publish_state();
       return;
     }
     this->parent_->request_level(level);
+    this->publish_state();
   }
   if (call.get_target_temperature().has_value()) this->parent_->request_target(*call.get_target_temperature());
   if (call.get_mode().has_value() && *call.get_mode() == climate::CLIMATE_MODE_HEAT) this->parent_->request_start();
@@ -80,6 +82,7 @@ void DuepiLevel::control(float value) {
   } else {
     this->parent_->reject_control("Invalid requested level");
   }
+  this->publish_state(this->state);
 }
 
 void DuepiReset::press_action() { this->parent_->request_reset(); }

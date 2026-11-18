@@ -51,7 +51,7 @@ duepi:
   id: stove
   uart_id: stove_uart
   enable_reset: false
-  # true includes installer/custom/raw support; false excludes it from firmware.
+  # true includes general installer/custom/raw tools; standby_mode is independent.
   # Installer Access starts off in Home Assistant.
   enable_installer: false
   firmware_profile: auto
@@ -121,6 +121,8 @@ sensor:
     #   name: Flue Motor Correction
     # pellet_correction:
     #   name: Pellet Correction
+    exhaust_fan_correction_d500:
+      name: Exhaust Fan Correction D500
 
 text_sensor:
   - platform: duepi

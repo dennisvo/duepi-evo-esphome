@@ -60,7 +60,15 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   void set_enable_raw_commands(bool value) { this->raw_enabled_ = value; }
   void set_arming_timeout(uint32_t value) {
     this->installer_permission_.lifetime = this->custom_permission_.lifetime = value;
+    this->standby_permission_.lifetime = value;
   }
+  void set_standby_mode(DuepiStandbySwitch *entity, uint8_t parameter) {
+    this->standby_switch_ = entity;
+    this->standby_parameter_ = parameter;
+    this->standby_permission_.configured = true;
+    this->standby_permission_.set_enabled(true);
+  }
+  bool request_standby(bool value);
   bool set_installer_access(bool value);
   bool set_installer_enabled(bool value);
   bool set_custom_enabled(bool value);
@@ -86,11 +94,13 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   bool send_custom(const std::string &command, bool raw);
   bool handle_privileged_result_(const Request &request, Outcome outcome, const Response *response);
   bool privileged_ready_() const;
+  bool installer_write_ready_() const;
   void finish_installer_write_();
   void restart_observation_();
 #endif
   bool submit_(Request request);
   bool write_blocked_(Command command) const {
+    if (command == Command::INSTALLER_WRITE) return false;
     return is_write(command) &&
         ((this->state_.fields[0].valid && ControlPolicy::shutdown_phase(this->state_.fields[0].data >> 8)) ||
          (command != Command::OFF && this->engine_.off_pending()));
@@ -120,9 +130,6 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   uint32_t verification_at_{0};
   float retained_target_{NAN};
   bool retained_target_requested_{false};
-  uint16_t desired_level_{1};
-  bool local_level_{false};
-  bool has_level_{false};
   bool read_power_level_{true};
   std::array<sensor::Sensor *, FIELD_COUNT> numeric_{};
   std::array<text_sensor::TextSensor *, 10> text_{};
@@ -130,6 +137,9 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
 #ifdef USE_DUEPI_INSTALLER
   OneShotPermission installer_permission_;
   OneShotPermission custom_permission_;
+  OneShotPermission standby_permission_;
+  DuepiStandbySwitch *standby_switch_{nullptr};
+  uint8_t standby_parameter_{0};
   bool raw_enabled_{false};
   bool installer_verifying_{false};
   Request installer_expected_{};

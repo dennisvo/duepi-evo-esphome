@@ -97,6 +97,7 @@ const char *command_name(Command command) {
       "phase", "room", "d3000", "d4000", "flue", "exhaust", "alarm", "inputs", "target",
       "pcb", "firmware", "board", "total_runtime", "service_runtime", "power_level",
       "flue_extraction_speed", "extraction_sensor_level", "flue_motor_correction", "pellet_correction", "cycle_time",
+      "exhaust_fan_correction_d500",
     #ifdef USE_DUEPI_INSTALLER
       "installer_read",
     #else
@@ -117,7 +118,7 @@ bool build_request(const Request &request, WireFrame &frame) {
   static const char *const READS[] = {
       "D900", "D100", "D300", "D400", "D000", "EF00", "DA00",
       "C000", "C600", "DF00", "DC00", "C400", "ED00", "EE00", "C500",
-      "D200", "DB00", "DD00", "DE00", "D800"};
+      "D200", "DB00", "DD00", "DE00", "D800", "D500"};
   auto ordinal = static_cast<size_t>(request.command);
   if (ordinal < sizeof(READS) / sizeof(READS[0])) return encode_command(READS[ordinal], 4, frame);
   switch (request.command) {

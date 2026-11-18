@@ -40,14 +40,15 @@ the board type does not enable a Hydro profile or prevent commands on Hydro hard
 The component is not tied to a particular ESP32 board: board selection and UART
 pins are configured in YAML. Use an ESPHome-supported ESP32 board with the
 ESP-IDF framework and suitable UART pins. The example has been validated and
-compiled for the **Seeed XIAO ESP32-C3**, with ESPHome **2026.10.2** and ESP-IDF
+compiled for the **Seeed XIAO ESP32-C3/C6**, with ESPHome **2026.10.2** and ESP-IDF
 **5.5.6**; other ESP32 boards have not yet been build-tested. Controller
 compatibility, wiring and electrical levels must be checked for each installation.
 ESP8266 and vendor-app/TCP connections are not supported.
 Each ESP device connects to one stove; configure one `duepi:` hub per device.
 
-See the [architecture](docs/ARCHITECTURE.md) and [protocol reference](docs/PROTOCOL.md)
-for implementation and wire-protocol details.
+See [stove and integration behavior](docs/BEHAVIOR.md) for operating rules and
+observations, [architecture](docs/ARCHITECTURE.md) for implementation, and the
+[protocol reference](docs/PROTOCOL.md) for wire details.
 
 ## Stove Compatibility
 
@@ -128,12 +129,13 @@ reboot and can be switched on/off in Home Assistant without rebuilding. Normal
 controls do not depend on this switch. With installer support disabled, advanced
 controls, actions and their implementation are excluded from the firmware.
 
-`firmware_profile` defaults `auto`, following the vendor app: start with the
-selected level using `F001`..`F005`, independently of the firmware identifier.
+`firmware_profile` defaults `auto`: start with fresh controller-reported power,
+or level 1 if unavailable, using `F001`..`F005` independently of the firmware identifier.
 Alternatives `"9200"`, `E670`, `E693` retain explicit legacy start overrides only.
 `read_power_level` defaults true and polls `C500`; set it false only for
 controllers that do not support this read. Disabling it leaves power writes
-available but prevents power-level readback verification.
+available but prevents power-level readback verification and leaves power
+controls unknown without fresh feedback.
 UART uses 115200 baud, 8N1; serial logging is disabled in the example.
 
 Set room-temperature command limits on the hub:
@@ -204,32 +206,14 @@ Normal controls are available without an opt-in. First check communication and
 readings before issuing commands.
 
 Select power directly from the climate entity's preset selector in Home Assistant;
-no extra YAML entity is needed. While observed Off, selecting a preset changes
-only a local choice and sends no stove command. A later explicit HEAT request
-starts at that level. In ignition/heating, a preset sends a level request without
-changing the target. An ACK updates the selected preset as unverified; a fresh
-`C500` reply supplies the controller-reported power level and can verify a
-matching level write. A mismatch displays the reported level and records both
-requested and reported values in the transaction result. Invalid feedback or a
-15-second verification expiry leaves the write unverified; it is never retried.
-
-Following the vendor app, **Power** is the selected level (1..5): the climate
-presets provide its control, and the optional number provides the same control
-numerically. The **Power** sensor (`power_level`) exposes its `C500` readback, not
-measured output. **Auger Level** (`D400`) is the read-only pellet-feed stage,
-not measured RPM or pellet flow. **Fan Speed**
-(`D300`) is another read-only diagnostic, not the selected power.
-Write confirmation appears in the transaction result. A local off-state choice takes
-precedence over polling until Start is acknowledged or the stove leaves Off.
-This includes starts from the stove's panel. Otherwise new `C500`
-readings update the selection, including panel changes if the firmware reports
-them. A matching report verifies the selected level, not delivered
-heat output. Panel tracking on A060 still requires hardware validation.
-
-Selection is unavailable during UART recovery, stale core telemetry and ordinary
-shutdown. No selection is restored from flash or automatically replayed. Before
-any read/selection, an explicit Start uses level 1; valid controller readback can
-initialize the desired level first.
+no extra YAML entity is needed. Power changes while Off are rejected without
+sending or storing a choice. Press HEAT, wait for fresh ignition readings, then
+select power. In ignition/heating, a preset sends a level request without changing
+the target. Presets and the optional number follow fresh controller readback,
+not the requested value or ACK. **Power** is distinct from auger and fan speeds.
+Check Transaction Result for command outcomes.
+See [Power and Actuators](docs/BEHAVIOR.md#power-and-actuators) for startup,
+panel tracking, feedback and restrictions.
 
 The optional controller-level number remains available for existing dashboards.
 It shares the same selection and readback rules as the climate presets; it is not
@@ -255,35 +239,27 @@ button:
     name: Reset Stove Alarm
 ```
 
-Writes require fresh phase, room, alarm, firmware and board observations after
-startup/recovery. Ignition requires observed Off and no alarm; level changes
-on the wire require ignition or heating. Outside ordinary shutdown, Off remains available with a
-reported alarm. There is no independent fan control.
+Writes require fresh, synchronized stove readings. Start requires observed Off
+and no alarm; power commands require ignition/heating. There is no independent
+auger or fan control. See [operating rules](docs/BEHAVIOR.md#operating-states-and-commands)
+for the phase-specific permissions and climate display behavior.
 
-Automatic mode follows the app's selected-level startup. Override
+Automatic startup uses fresh reported power or level 1. Override
 `firmware_profile` only when a legacy start command is required; a profile does not
 establish compatibility or change telemetry decoding or installer parameter
 meanings. The [protocol reference](docs/PROTOCOL.md#write-commands) lists the mappings.
 
-Boot, API reconnect and telemetry publication never restore or transmit desired
-settings. Newer unsent target/level changes replace older ones. Cancelled or
-timed-out writes are never automatically replayed. The component does not provide
-emergency-stop guarantees; use the stove's own controls and safety procedures.
+Boot and reconnection do not automatically send desired settings. Writes are
+never automatically retried. The component does not provide emergency-stop
+guarantees; use the stove's own controls and safety procedures.
 
 ### Shutdown Protection
 
 Requesting Off cancels older queued writes and blocks conflicting new ones.
 Once ordinary stopping or cooldown is reported, all unsent writes are cancelled
-and new writes are rejected, including redundant Off and custom/raw commands.
-Recognized read-only queries continue under their normal access requirements.
-Cancelled commands never replay; an already transmitted command cannot be recalled.
-
-Eco cooldown is automatic temperature-driven cycling, not an explicit Off decision:
-target changes and explicit Off remain available under normal authorization.
-Their exact effect during eco cooldown is unverified. Shutdown initiated on the
-stove's display is detected through periodic polling, not immediately. See
-[Shutdown Protection](docs/ARCHITECTURE.md#shutdown-protection) for phase handling,
-queue rules and detection limits.
+and new writes are rejected. Reads continue under their normal access requirements.
+Panel shutdown is detected by polling, not immediately. Eco has different rules;
+see [operating states and commands](docs/BEHAVIOR.md#operating-states-and-commands).
 
 ## Telemetry and Outcomes
 
@@ -310,12 +286,8 @@ override with `entity_category`; `entity_category: ""` restores normal placement
 Auto-generated installer entities have fixed categories. Diagnostic
 categorization does not disable an entity.
 
-Startup numeric telemetry is unknown; stale numeric telemetry becomes NaN/unknown.
-Stale observed text fields are marked Stale.
-Runtime counters expire after twice their polling interval; their units are
-unconfirmed. **Fan Speed** uses `D300`; **Auger Level** uses `D400`.
-Neither is measured heat output or selected-level verification;
-`D400` can also contain ignition-stage values 6 and 7. Existing YAML keys
+Startup and stale readings can be unknown. **Fan Speed** uses `D300`;
+**Auger Level** uses `D400`. These are distinct from Power. Existing YAML keys
 `d3000`/`d4000` remain supported. See the [protocol reference](docs/PROTOCOL.md#read-commands).
 The numeric target and power-level sensors are observed readback only.
 Omitting a standard sensor entity does not stop its register being polled.
@@ -342,49 +314,39 @@ Existing Home Assistant entity names/categories may
 retain registry customizations; obsolete entities can remain unavailable after
 firmware updates until removed from the entity registry.
 
-The climate target prefers a fresh controller reading. Without one, it retains
-the most recent valid reading or acknowledged target request, whichever occurred
-last. It starts unknown, has no invented default and is not restored after reboot.
-The example's **Target Temperature Source** diagnostic (`target_source`) reports
-`Reported`, `Retained reading (unverified)`, `Acknowledged request (unverified)` or
-`Unknown`. Queued, rejected, cancelled and timed-out writes never change this
-fallback; an ACK alone does not verify the stove's setpoint.
+Climate can retain an unverified target when readback is unavailable; the numeric
+sensor remains observed-only. **Target Temperature Source** explains that display.
+Always consider phase and communication health: climate OFF alone is not proof
+of a stopped stove. See [temperature targets](docs/BEHAVIOR.md#temperature-targets).
 
-Unavailable target feedback makes the numeric sensor unknown while the climate
-can retain its previous value. That retained value is not a new stove reading.
+An ACK is not verification, and a missing ACK does not prove failure. Check
+Transaction Result for the outcome. See [communication and outcomes](docs/BEHAVIOR.md#communication-and-outcomes)
+for freshness, recovery and readback rules. Do not write actuator registers or
+installer parameters merely because they are readable.
 
-ESPHome climate has no unknown mode enum: before observation it has the framework
-OFF placeholder, and stale/unknown phases retain the last mode/action. Always
-consider the reported phase, numeric freshness and communication sensor; OFF
-alone is not proof of a stopped stove.
+## Standby Mode
 
-Transactions distinguish queued, sent, acknowledged/unverified, verified,
-rejected, cancelled, timed out and indeterminate. Target/Off/ignition and level require
-matching readback for verification; level uses `C500`, not `D300`/`D400`. Reset remains unverified. Custom responses
-are diagnostic hex data, never telemetry. All writes, including apparently read-only
-custom commands, are **never retried**. A missing ACK does not prove a command failed.
-See [State and Authorization](docs/ARCHITECTURE.md#state-and-authorization) for
-readback rules and response-correlation limits.
+For a controller with a confirmed standby parameter, add this under `duepi:`:
 
-### Read First, Then Test Power
+```yaml
+standby_mode: {parameter: 28, name: Standby Mode}
+```
 
-1. Deploy the examples' `power_level` sensor.
-	Observe it without changing any controls. Reads never send desired settings.
-2. Compare panel-selected levels with **Power** (`C500`). Keep
-	**Auger Level** (`D400`) separate; modulation and ignition stages can differ.
-3. When ready, use the existing climate presets or optional Power
-	number. While Off this only selects the next startup level; during
-	ignition/heating it sends `F00n`. Check the transaction result and `C500`
-	rather than treating an ACK as success.
-4. Do not write fan/feed telemetry registers or installer parameters based merely
-	on readable values. Only documented consumer commands have semantic controls.
+Address 28 with raw values 0 (off) and 1 (on) was confirmed on the tested stove;
+this is not a universal PR-to-serial mapping. The switch works without
+`enable_installer` or Installer Access. It reads the parameter periodically and
+shows the last confirmed value, not an optimistic toggle. It sends no startup
+write. Changes require fresh synchronized readings and a known phase other than
+ignition. The stove manages standby stopping/restarting, not ESPHome.
+See [standby behavior](docs/BEHAVIOR.md#standby-mode) for limitations.
 
 ## Installer and Custom Commands
 
-Set `enable_writes: true` and `enable_installer: true` under `duepi:`, then
+Set `enable_installer: true` under `duepi:`, then
 rebuild and install. The installer controls appear under Configuration in Home
-Assistant. All installer and custom operations require **Installer Access** on
-and fresh stove readings. Access is off after every reboot.
+Assistant; Installer Result is under Diagnostics. All installer and custom
+operations require **Installer Access** on and fresh stove readings. Access is
+off after every reboot.
 
 ### Read or Write a Parameter
 
@@ -392,7 +354,9 @@ and fresh stove readings. Access is off after every reboot.
 2. Enter the documented serial address (0..255) in
 	**Installer Input: Parameter Number**, then press **Installer Operation: Read**.
 	The raw value appears in **Installer Result**.
-3. To change it, first record the original value and ensure the stove is off.
+3. To change it, first record the original value. Prefer a stopped stove;
+	**never change parameters during ignition**. The component blocks ignition,
+	unknown phases and stale/unsynchronized readings, but permits other known phases.
 	Enter the raw value (0..255) in **Installer Input: Value to Write**, then press
 	**Installer Operation: Write**.
 4. Check **Installer Result** for the readback outcome. Wait for each operation
@@ -402,6 +366,18 @@ and fresh stove readings. Access is off after every reboot.
 Changing an input alone sends nothing. The value input starts at zero, which is
 not a reading or recommended setting. Printed PR numbers are not verified serial
 addresses; use controller-specific documentation for addresses, units and ranges.
+
+**Manufacturer guidance for parameter changes:**
+
+- Never change parameters during startup: heated, unignited pellets can release
+	gas that later ignites and causes overpressure in the combustion chamber.
+- Decide which program settings to change before entering programming mode.
+- Prefer making changes when the stove is not burning.
+- If changing settings while burning, keep time in programming mode as short as possible.
+
+These precautions do not establish that every live serial write is safe or that
+serial access has the same effects as the panel's programming menu. The phase
+guard uses polling, so it cannot detect physical phase changes instantaneously.
 
 A matching readback confirms only the returned byte, not that the setting is
 appropriate. Failed readback leaves the write unverified; writes are not retried
@@ -413,7 +389,7 @@ cancels pending installer work, including readback.
 | YAML action | Fields besides `id: stove` | Additional requirement |
 | --- | --- | --- |
 | `duepi.installer_read` | `parameter` integer 0..255 | None |
-| `duepi.installer_write` | `parameter`, `value` integers 0..255 | Stove observed off |
+| `duepi.installer_write` | `parameter`, `value` integers 0..255 | Known phase outside ignition |
 | `duepi.send_command` | `command` four hex characters | None |
 | `duepi.send_raw` | `command` six uppercase alphanumeric characters | None |
 
@@ -423,8 +399,9 @@ native API actions are `stove_installer_read(parameter)`,
 `stove_send_raw(payload)`. Home Assistant prefixes these with the node name.
 
 The hub adds framing and checksum to custom commands. **Custom commands bypass
-normal firmware, alarm, phase and parameter checks, including the off-state
-requirement.** Ordinary-shutdown and pending-Off protections still apply.
+normal firmware, alarm and command-specific checks.** Ordinary-shutdown and
+pending-Off protections still apply. Raw installer-write payloads beginning with
+`S` also retain the ignition/known-phase guard.
 Restrict API access: these interfaces are not limited to safe reads.
 
 **Custom Response Data** shows `Pending`, a hexadecimal reply, or `Unavailable`
@@ -500,8 +477,8 @@ In priority order:
 
 - [ ] Fix remote power-level changes not applying; compare panel and remote changes
     against selected power level
-- [ ] Fix installer parameter writes and verify whether reads are also affected,
-	including readback verification.
+- [x] Restore installer parameter reads and writes; user confirmed reads and a
+	write to raw serial address 28 from 0 to 1 on their stove. Plus read of other parameters
 - [ ] Investigate the TXB0104 logic-level shifter blocking UART signals; evaluate
 	a [TXU0202](https://www.ti.com/product/TXU0202) as an alternative for 5 V/3.3 V UART.
 - [ ] Complete the protocol reference with full alarm and phase tables,

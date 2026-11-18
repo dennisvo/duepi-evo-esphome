@@ -114,6 +114,7 @@ void codec_tests() {
       {Command::FLUE_MOTOR_CORRECTION, "RDD000", "flue_motor_correction"},
       {Command::PELLET_CORRECTION, "RDE000", "pellet_correction"},
       {Command::CYCLE_TIME, "RD8000", "cycle_time"},
+      {Command::EXHAUST_FAN_CORRECTION_D500, "RD5000", "exhaust_fan_correction_d500"},
   };
   for (const auto &diagnostic : diagnostics) {
     CHECK(build_request({diagnostic.command}, frame));
@@ -132,6 +133,9 @@ void codec_tests() {
   CHECK(numeric_value(Command::EXTRACTION_SENSOR_LEVEL, 0x1234AB) == 4660);
   CHECK(numeric_value(Command::FLUE_MOTOR_CORRECTION, 0xFE3300) == 254);
   CHECK(numeric_value(Command::PELLET_CORRECTION, 0x7F4400) == 127);
+  CHECK(numeric_value(Command::EXHAUST_FAN_CORRECTION_D500, 0x000000) == 0);
+  CHECK(numeric_value(Command::EXHAUST_FAN_CORRECTION_D500, 0x1234AB) == 0x1234AB);
+  CHECK(numeric_value(Command::EXHAUST_FAN_CORRECTION_D500, 0xFFFFFF) == 0xFFFFFF);
   ObservedState power_state;
   CHECK(power_state.update(Command::REQUESTED_POWER, Response{0x000300}, 10));
   CHECK(power_state.fresh(Command::REQUESTED_POWER, 10, 100));

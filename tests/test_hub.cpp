@@ -58,6 +58,12 @@ class TestInstallerSwitch : public DuepiPrivilegeSwitch {
  public:
   void change(bool value) { this->write_state(value); }
 };
+
+class TestStandbySwitch : public DuepiStandbySwitch {
+ public:
+  void change(bool value) { this->write_state(value); }
+  bool known() const { return this->known_; }
+};
 #endif
 
 class TestClimate : public DuepiClimate {
@@ -90,6 +96,7 @@ void power_preset_tests() {
     climate.control(call);
     CHECK(hub.queued() == 0);
     hub.synchronize();
+    hub.observe(Command::REQUESTED_POWER, static_cast<uint32_t>(level) << 8);
     climate.control(call);
     CHECK(hub.queued() == 0);
     CHECK(hub.writes.empty());
@@ -143,6 +150,8 @@ void power_preset_tests() {
       test_now = 101;
       hub.tick();
       hub.receive("000000");
+      CHECK(number.state == 5);
+      hub.observe(Command::REQUESTED_POWER, 0x000200);
       CHECK(number.state == 2);
       CHECK(climate.get_custom_preset() == "Low");
       climate.control(call);
@@ -152,7 +161,7 @@ void power_preset_tests() {
       hub.tick();
       CHECK(hub.writes.size() == 3);
     }
-    if (level == 1) {
+    if (level == 1 || level == 2) {
       CHECK(climate.get_custom_preset() == call.custom_preset);
       CHECK(number.state == level);
     } else {
@@ -161,11 +170,67 @@ void power_preset_tests() {
     }
   }
   test_now = 0;
-  std::cout << "PASS: climate Min/Low/Medium/High/Max map to levels 1..5, ACK-only shared state, rejection, cancellation, timeout, shutdown, stale and recovery\n";
+  std::cout << "PASS: climate power presets follow readback only, Off rejection, cancellation, timeout, shutdown, stale and recovery\n";
 }
 
 void power_feedback_tests() {
   const char *presets[] = {"Min", "Low", "Medium", "High", "Max"};
+  for (uint16_t phase : {0x0000, 0x0401, 0x1000, 0x1001, 0x0301, 0x0801, 0x0802}) {
+    test_now = 0;
+    TestHub hub;
+    TestClimate climate;
+    TestLevel number;
+    climate.set_parent(&hub);
+    number.set_parent(&hub);
+    hub.set_climate(&climate);
+    hub.set_level_number(&number);
+    hub.setup();
+    hub.synchronize();
+    hub.observe(Command::PHASE, static_cast<uint32_t>(phase) << 8);
+    hub.observe(Command::REQUESTED_POWER, 0x000200);
+    size_t published = climate.publications;
+    climate::ClimateCall call;
+    call.custom_preset = "Max";
+    climate.control(call);
+    number.control(5);
+    CHECK(climate.publications > published);
+    CHECK(climate.get_custom_preset() == "Low");
+    CHECK(number.state == 2);
+    CHECK(hub.queued() == 0 && hub.writes.empty());
+  }
+  {
+    test_now = 0;
+    TestHub hub;
+    TestClimate climate;
+    climate.set_parent(&hub);
+    hub.set_climate(&climate);
+    hub.setup();
+    hub.synchronize();
+    hub.observe(Command::REQUESTED_POWER, 0x000200);
+    climate::ClimateCall call;
+    call.custom_preset = "Max";
+    call.mode = climate::CLIMATE_MODE_HEAT;
+    climate.control(call);
+    CHECK(climate.get_custom_preset() == "Low");
+    CHECK(hub.queued() == 1);
+    hub.tick();
+    CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RF0020");
+  }
+  {
+    test_now = 0;
+    TestHub hub;
+    TestLevel number;
+    hub.set_level_number(&number);
+    hub.setup();
+    hub.synchronize();
+    hub.observe(Command::REQUESTED_POWER, 0x000400);
+    test_now = 45000;
+    hub.synchronize();
+    CHECK(std::isnan(number.state));
+    CHECK(hub.request_start());
+    hub.tick();
+    CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RF0010");
+  }
   for (uint16_t phase : {0x0101, 0x0201}) {
     test_now = 0;
     TestHub hub;
@@ -178,19 +243,19 @@ void power_feedback_tests() {
     hub.set_numeric_sensor(static_cast<size_t>(Command::REQUESTED_POWER), &reported);
     hub.setup();
     hub.synchronize();
-    CHECK(hub.request_level(5));
+    CHECK(!hub.request_level(5));
     hub.observe(Command::REQUESTED_POWER, 0x000100);
-    CHECK(number.state == 5 && reported.state == 1);
-    CHECK(climate.get_custom_preset() == "Max");
+    CHECK(number.state == 1 && reported.state == 1);
+    CHECK(climate.get_custom_preset() == "Min");
     hub.observe(Command::PHASE, static_cast<uint32_t>(phase) << 8);
     hub.observe(Command::REQUESTED_POWER, 0x000200);
     CHECK(number.state == 2 && reported.state == 2);
     CHECK(climate.get_custom_preset() == "Low");
     hub.observe(Command::PHASE, 0);
-    CHECK(hub.request_level(4));
+    CHECK(!hub.request_level(4));
     hub.observe(Command::REQUESTED_POWER, 0x000200);
-    CHECK(number.state == 4 && reported.state == 2);
-    CHECK(climate.get_custom_preset() == "High");
+    CHECK(number.state == 2 && reported.state == 2);
+    CHECK(climate.get_custom_preset() == "Low");
     CHECK(hub.writes.empty());
   }
   for (uint16_t level = 1; level <= 5; ++level) {
@@ -212,16 +277,17 @@ void power_feedback_tests() {
     hub.observe(Command::REQUESTED_POWER, 0x000500);
     CHECK(number.state == 5 && reported.state == 5);
     CHECK(climate.get_custom_preset() == "Max");
-    CHECK(hub.request_level(level));
+    CHECK(!hub.request_level(level));
     CHECK(hub.writes.empty() && hub.queued() == 0);
-    CHECK(number.state == level);
-    CHECK(climate.get_custom_preset() == presets[level - 1]);
+    CHECK(number.state == 5);
+    CHECK(climate.get_custom_preset() == "Max");
+    CHECK(status.state.find("use HEAT to start") != std::string::npos);
     hub.observe(Command::REQUESTED_POWER, 0x000500);
-    CHECK(number.state == level && reported.state == 5);
+    CHECK(number.state == 5 && reported.state == 5);
     CHECK(hub.request_start());
     hub.tick();
     CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) ==
-          "RF00" + std::to_string(level) + "0");
+          "RF0050");
     test_now = 1;
     hub.receive("000000");
     hub.observe(Command::PHASE, 0x010100);
@@ -235,7 +301,8 @@ void power_feedback_tests() {
     hub.tick();
     hub.receive("000000");
     hub.publish();
-    CHECK(number.state == level);
+    CHECK(number.state == 5);
+    CHECK(climate.get_custom_preset() == "Max");
     CHECK(status.state.find("value=" + std::to_string(level)) != std::string::npos);
     hub.observe(Command::D4000, static_cast<uint32_t>(level) << 8);
     CHECK(status.state.find("acknowledged, unverified") != std::string::npos);
@@ -258,7 +325,8 @@ void power_feedback_tests() {
     hub.receive("000000");
     hub.observe(Command::REQUESTED_POWER, 0);
     CHECK(std::isnan(reported.state));
-    CHECK(number.state == 4);
+    CHECK(std::isnan(number.state));
+    CHECK(!climate.has_custom_preset());
     CHECK(status.state.find("readback unavailable") != std::string::npos);
     CHECK(hub.request_level(2));
     test_now = 401;
@@ -273,6 +341,8 @@ void power_feedback_tests() {
     hub.observe(Command::ROOM, 0x00D700);
     hub.observe(Command::ALARM, 0);
     CHECK(std::isnan(reported.state));
+    CHECK(std::isnan(number.state));
+    CHECK(!climate.has_custom_preset());
   }
   {
     test_now = 0;
@@ -330,8 +400,8 @@ void power_feedback_tests() {
     hub.set_firmware_profile(profile);
     hub.setup();
     hub.synchronize();
-    CHECK(hub.request_level(3));
-    CHECK(number.state == 3);
+    CHECK(!hub.request_level(3));
+    CHECK(std::isnan(number.state));
     CHECK(hub.request_start());
     hub.tick();
     CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) ==
@@ -347,7 +417,7 @@ void power_feedback_tests() {
         CHECK(number.state == 2);
   }
   test_now = 0;
-  std::cout << "PASS: C500 readback, local off-state selection, selected-level startup, ignition writes, readback match/mismatch/unavailable/expiry, optional polling and explicit legacy overrides\n";
+  std::cout << "PASS: C500-only selection, Off rejection, reported-level startup, ignition writes, match/mismatch/unavailable/expiry, optional polling and legacy overrides\n";
 }
 
 void normal_tests() {
@@ -406,7 +476,7 @@ void normal_tests() {
   CHECK(hub.writes.size() == 1);
   hub.synchronize();
   CHECK(hub.request_start());
-  CHECK(hub.request_level(3));
+  CHECK(!hub.request_level(3));
   CHECK(hub.request_off());
   hub.tick();
   CHECK(hub.writes.size() == 2);
@@ -557,6 +627,157 @@ void prepare_installer(TestHub &hub) {
   hub.set_enable_installer(true);
   CHECK(hub.set_installer_enabled(true));
   hub.synchronize();
+}
+
+void standby_tests() {
+  test_now = 0;
+  TestHub hub;
+  TestStandbySwitch standby;
+  standby.set_parent(&hub);
+  hub.set_standby_mode(&standby, 28);
+  hub.setup();
+  CHECK(!standby.known() && hub.writes.empty());
+  CHECK(!hub.request_standby(true));
+  hub.synchronize();
+  CHECK(!hub.installer_read(28));
+  CHECK(!hub.request_installer_write(28, 1));
+  Request read{Command::INSTALLER_READ};
+  read.parameter = 28;
+  read.standby = true;
+  CHECK(hub.queue(read));
+  hub.tick();
+  CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "L1C000");
+  hub.receive("000000");
+  CHECK(standby.known() && !standby.state);
+  standby.change(true);
+  CHECK(!standby.state);
+  test_now = 100;
+  hub.tick();
+  CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "S1C010");
+  hub.receive("000000");
+  CHECK(!standby.state);
+  CHECK(!hub.request_standby(false));
+  CHECK(!hub.set_installer_access(false));
+  test_now = 200;
+  hub.tick();
+  CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "L1C000");
+  hub.receive("010000");
+  CHECK(standby.state);
+  test_now = 1200;
+  hub.tick();
+  hub.synchronize();
+  CHECK(hub.request_standby(false));
+  hub.tick();
+  CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "S1C000");
+  hub.receive("000000");
+  CHECK(standby.state);
+  test_now += 100;
+  hub.tick();
+  hub.receive("010000");
+  CHECK(standby.state);
+  test_now += 1000;
+  hub.tick();
+  hub.synchronize();
+  CHECK(hub.queue(read));
+  hub.tick();
+  hub.receive("020000");
+  CHECK(standby.state);
+  Request wrong{Command::INSTALLER_READ};
+  wrong.parameter = 29;
+  wrong.standby = true;
+  CHECK(hub.queue(wrong));
+  size_t sent = hub.writes.size();
+  test_now += 100;
+  hub.tick();
+  CHECK(hub.writes.size() == sent);
+
+  for (uint16_t phase : {0x0000, 0x0200, 0x0201, 0x0301, 0x0401, 0x0801, 0x0802, 0x1000,
+                         0x0101, 0x010A, 0x0133, 0x9999}) {
+    for (bool send_time : {false, true}) {
+      test_now = 0;
+      TestHub gated;
+      TestStandbySwitch entity;
+      entity.set_parent(&gated);
+      gated.set_standby_mode(&entity, 7);
+      gated.setup();
+      gated.synchronize();
+      bool permitted = known_phase(phase) && (phase >> 8) != 1;
+      if (send_time) {
+        CHECK(gated.request_standby(true));
+        gated.observe(Command::PHASE, static_cast<uint32_t>(phase) << 8);
+      } else {
+        gated.observe(Command::PHASE, static_cast<uint32_t>(phase) << 8);
+        CHECK(gated.request_standby(true) == permitted);
+      }
+      gated.tick();
+      CHECK(gated.writes.size() == (permitted ? 1U : 0U));
+      if (permitted)
+        CHECK(std::string(gated.writes.back().begin() + 1, gated.writes.back().begin() + 7) == "S07010");
+    }
+  }
+  test_now = 0;
+  TestHub polling;
+  TestStandbySwitch polled;
+  polled.set_parent(&polling);
+  polling.set_standby_mode(&polled, 28);
+  polling.setup();
+  bool found = false;
+  for (size_t index = 0; index < 20 && !found; ++index) {
+    polling.poll();
+    std::string payload(polling.writes.back().begin() + 1, polling.writes.back().begin() + 7);
+    CHECK(payload[0] != 'S');
+    if (payload == "L1C000") {
+      polling.receive("010000");
+      found = true;
+    } else if (payload == "RDC000") polling.receive("A06000");
+    else if (payload == "RD9000") polling.receive("020100");
+    else if (payload == "RD1000") polling.receive("00D700");
+    else if (payload == "RC5000") polling.receive("000200");
+    else if (payload == "RC6000") polling.receive("001400");
+    else polling.receive("000000");
+    test_now += 100;
+  }
+  CHECK(found && polled.known() && polled.state);
+  test_now += 45001;
+  CHECK(!polling.request_standby(false));
+
+  test_now = 0;
+  TestHub timeout;
+  TestStandbySwitch unchanged;
+  unchanged.set_parent(&timeout);
+  timeout.set_standby_mode(&unchanged, 28);
+  timeout.setup();
+  timeout.synchronize();
+  unchanged.publish_observed(false);
+  CHECK(timeout.request_standby(true));
+  timeout.tick();
+  timeout.receive("000000");
+  for (uint32_t now : {100U, 800U, 900U, 1600U, 3000U}) {
+    test_now = now;
+    timeout.tick();
+  }
+  CHECK(!unchanged.state);
+  timeout.synchronize();
+  timeout.tick();
+  size_t parameter_writes = 0;
+  for (const auto &frame : timeout.writes)
+    if (frame[1] == 'S') ++parameter_writes;
+  CHECK(parameter_writes == 1);
+
+  test_now = 0;
+  TestHub raw;
+  raw.set_enable_installer(true);
+  raw.set_enable_custom_commands(true);
+  raw.set_enable_raw_commands(true);
+  raw.setup();
+  raw.synchronize();
+  CHECK(raw.set_installer_access(true));
+  CHECK(raw.request_custom("S1C010", true));
+  raw.observe(Command::PHASE, 0x010100);
+  raw.tick();
+  CHECK(raw.writes.empty());
+  CHECK(!raw.request_custom("S1C010", true));
+  std::cout << "PASS: scoped standby permission, read-only boot/polling, exact address, ACK/readback separation, mismatch, invalid value and ignition guards\n";
 }
 
 void installer_tests() {
@@ -742,8 +963,7 @@ void installer_tests() {
   CHECK(identity_status.state.find("PR2 read value 2") != std::string::npos);
   identity.observe(Command::PHASE, 0x020100);
   CHECK(identity.arm_installer_write());
-  CHECK(!identity.installer_write(1, 2));
-  CHECK(identity_status.state.find("stove not off") != std::string::npos);
+  CHECK(identity.installer_write(1, 2));
   identity.set_installer_enabled(false);
   CHECK(!identity.installer_read(1));
   CHECK(identity_status.state.find("read rejected") != std::string::npos);
@@ -1360,7 +1580,7 @@ void shutdown_tests() {
     pending_off.set_init_command(initialization);
     CHECK(pending_off.request_off());
     CHECK(!pending_off.request_custom("D100", false));
-    CHECK(!pending_off.request_installer_write(3, 42));
+    CHECK(pending_off.request_installer_write(3, 42));
     pending_off.tick();
     CHECK(!pending_off.request_custom("D100", false));
     if (initialization) {
@@ -1371,7 +1591,7 @@ void shutdown_tests() {
     }
     CHECK(std::string(pending_off.writes.back().begin() + 1, pending_off.writes.back().begin() + 7) == "RF0000");
   }
-  for (Command command : {Command::INSTALLER_WRITE, Command::CUSTOM}) {
+  for (Command command : {Command::CUSTOM}) {
     for (bool send_time_only : {false, true}) {
       test_now = 0;
       TestHub advanced;
@@ -1396,7 +1616,6 @@ void shutdown_tests() {
         advanced.receive("2A0000");
       }
       if (command == Command::CUSTOM) CHECK(custom_response.state == "Unavailable");
-      CHECK(!advanced.request_installer_write(3, 42));
       CHECK(!advanced.request_custom("D100", false));
       CHECK(!advanced.request_custom("RD1000", true));
       advanced.observe(Command::PHASE, 0);
@@ -1404,6 +1623,24 @@ void shutdown_tests() {
       test_now += 100;
       advanced.tick();
       CHECK(advanced.writes.size() == transmitted);
+    }
+  }
+  for (uint16_t phase : {0x0000, 0x0200, 0x0201, 0x0301, 0x0401, 0x0801, 0x0802, 0x1000, 0x1003,
+                         0x0101, 0x0102, 0x0103, 0x0104, 0x0105, 0x010A, 0x0132, 0x0133, 0x9999}) {
+    for (bool send_time : {false, true}) {
+      test_now = 0;
+      TestHub parameter;
+      prepare_installer(parameter);
+      bool permitted = known_phase(phase) && (phase >> 8) != 1;
+      if (send_time) {
+        CHECK(parameter.request_installer_write(28, 1));
+        parameter.observe(Command::PHASE, static_cast<uint32_t>(phase) << 8);
+      } else {
+        parameter.observe(Command::PHASE, static_cast<uint32_t>(phase) << 8);
+        CHECK(parameter.request_installer_write(28, 1) == permitted);
+      }
+      parameter.tick();
+      CHECK(parameter.writes.size() == (permitted ? 1U : 0U));
     }
   }
 #endif
@@ -1500,16 +1737,19 @@ void deferred_off_tests() {
 }
 
 void optional_diagnostic_tests() {
-  for (unsigned mode : {0U, 1U, 2U, 3U}) {
+  for (unsigned mode : {0U, 1U, 2U, 3U, 4U}) {
     test_now = 0;
     TestHub hub;
     sensor::Sensor readings[4];
+    sensor::Sensor d500;
     text_sensor::TextSensor cycle;
     for (size_t index = 0; index < 4; ++index) {
       if (mode == 3 || (mode == 1 && index == 0))
         hub.set_numeric_sensor(static_cast<size_t>(Command::FLUE_EXTRACTION_SPEED) + index, &readings[index]);
     }
     if (mode == 2 || mode == 3) hub.set_text_sensor(9, &cycle);
+    if (mode == 3 || mode == 4)
+      hub.set_numeric_sensor(static_cast<size_t>(Command::EXHAUST_FAN_CORRECTION_D500), &d500);
     hub.setup();
     std::vector<std::string> expected = {
         "RDC000", "RC4000", "RD9000", "RD1000", "RDA000", "RC5000", "RC6000",
@@ -1521,6 +1761,7 @@ void optional_diagnostic_tests() {
       expected.push_back("RDE000");
     }
     if (mode == 2 || mode == 3) expected.push_back("RD8000");
+    if (mode == 3 || mode == 4) expected.push_back("RD5000");
     expected.push_back("RED000");
     expected.push_back("REE000");
     for (unsigned pass : {0U, 1U}) {
@@ -1536,7 +1777,7 @@ void optional_diagnostic_tests() {
                             command == "RC5000" ? "000300" : command == "RC6000" ? "001500" :
                             command == "RD2000" ? "123400" : command == "RDB000" ? "020100" :
                             command == "RDD000" ? "FE3300" : command == "RDE000" ? "7F4400" :
-                            command == "RD8000" ? "0A0B00" : "000000";
+                            command == "RD8000" ? "0A0B00" : command == "RD5000" ? "1234AB" : "000000";
         hub.receive(reply);
         test_now += 100;
       }
@@ -1544,6 +1785,13 @@ void optional_diagnostic_tests() {
       CHECK(hub.writes.size() == before + count);
     }
     if (mode == 1 || mode == 3) CHECK(readings[0].state == 4660);
+    if (mode == 3 || mode == 4) {
+      CHECK(d500.state == 0x1234AB);
+      hub.observe(Command::EXHAUST_FAN_CORRECTION_D500, 0);
+      CHECK(d500.state == 0);
+      hub.observe(Command::EXHAUST_FAN_CORRECTION_D500, 0x000001);
+      CHECK(d500.state == 1);
+    }
     if (mode == 3) {
       CHECK(readings[1].state == 513);
       CHECK(readings[2].state == 254);
@@ -1562,6 +1810,7 @@ void optional_diagnostic_tests() {
     if (mode == 3)
       for (const auto &reading : readings) CHECK(std::isnan(reading.state));
     if (mode == 2 || mode == 3) CHECK(cycle.state == "Stale");
+    if (mode == 3 || mode == 4) CHECK(std::isnan(d500.state));
   }
   test_now = 0;
   std::cout << "PASS: optional diagnostic polling, byte/word decoding, cycle formatting, freshness and runtime ordering\n";
@@ -1576,6 +1825,7 @@ int main() {
   normal_tests();
   target_feedback_tests();
 #ifdef USE_DUEPI_INSTALLER
+  standby_tests();
   installer_tests();
   installer_readback_failure_tests();
   installer_disabled_before_ack_test();

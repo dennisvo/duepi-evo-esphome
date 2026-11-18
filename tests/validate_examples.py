@@ -10,6 +10,8 @@ VARIANTS = {
     "standard": ("false", "false"),
     "controls": ("true", "false"),
     "installer": ("true", "true"),
+    "standby": ("false", "false"),
+    "installer-standby": ("true", "true"),
     "c6-standard": ("false", "false"),
 }
 
@@ -38,6 +40,10 @@ def main():
         field(field(config, "esphome"), "name").value = f"duepi-{name}"
         field(field(config, "external_components").value[0], "source").value = "../components"
         field(field(config, "duepi"), "enable_installer").value = installer
+        standby_enabled = name in ("standby", "installer-standby")
+        if standby_enabled:
+            standby = yaml.compose("standby_mode: {parameter: 28, name: Standby Mode}")
+            field(config, "duepi").value.extend(standby.value)
         if controls_enabled == "true":
             controls = yaml.compose(yaml.safe_dump({
                 "number": [{"platform": "duepi", "duepi_id": "stove", "kind": "level",
@@ -68,10 +74,12 @@ def main():
             assert "Arm One Custom Command" not in source
             assert b"Arm One Custom Command" not in firmware
             included = installer == "true"
-            assert ("#define USE_DUEPI_INSTALLER" in defines) == included
+            assert ("#define USE_DUEPI_INSTALLER" in defines) == (included or standby_enabled)
+            assert ("set_standby_mode" in source) == standby_enabled
+            assert (b"Standby Mode" in firmware) == standby_enabled
             for entity in ("DuepiInstallerValue", "DuepiInstallerButton", "DuepiInstallerAPI", "Installer Access"):
                 assert (entity in source) == included, (name, entity)
-            for symbol in (b"Installer Access", b"_installer_write", b"_send_raw"):
+            for symbol in (b"Installer Access", b"\x00_installer_write\x00", b"\x00_send_raw\x00"):
                 assert (symbol in firmware) == included, (name, symbol)
             print(f"PASS: installer implementation/entities/actions {'included' if included else 'excluded'}", flush=True)
 

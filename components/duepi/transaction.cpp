@@ -58,14 +58,16 @@ bool TransactionEngine::off_pending() const {
   return false;
 }
 
-void TransactionEngine::cancel_writes() {
-  if (this->continuation_pending_ && is_write(this->continuation_.request.command)) {
+void TransactionEngine::cancel_writes(bool include_parameters) {
+  if (this->continuation_pending_ && is_write(this->continuation_.request.command) &&
+      (include_parameters || this->continuation_.request.command != Command::INSTALLER_WRITE)) {
     Request cancelled = this->continuation_.request;
     this->continuation_pending_ = false;
     this->io_.result(cancelled, Outcome::CANCELLED, nullptr);
   }
   for (size_t index = 0; index < this->size_;) {
-    if (!is_write(this->queue_[index].request.command)) {
+    if (!is_write(this->queue_[index].request.command) ||
+      (!include_parameters && this->queue_[index].request.command == Command::INSTALLER_WRITE)) {
       ++index;
       continue;
     }
@@ -94,13 +96,14 @@ void TransactionEngine::cancel_queued() {
 
 #ifdef USE_DUEPI_INSTALLER
 void TransactionEngine::cancel_installer() {
-  if (this->continuation_pending_ && is_installer(this->continuation_.request.command)) {
+  if (this->continuation_pending_ && is_installer(this->continuation_.request.command) &&
+      !this->continuation_.request.standby) {
     Request cancelled = this->continuation_.request;
     this->continuation_pending_ = false;
     this->io_.result(cancelled, Outcome::CANCELLED, nullptr);
   }
   for (size_t index = 0; index < this->size_;) {
-    if (!is_installer(this->queue_[index].request.command)) {
+    if (!is_installer(this->queue_[index].request.command) || this->queue_[index].request.standby) {
       ++index;
       continue;
     }
@@ -108,7 +111,7 @@ void TransactionEngine::cancel_installer() {
     this->remove_(index);
     this->io_.result(cancelled, Outcome::CANCELLED, nullptr);
   }
-  if (this->retry_pending_ && is_installer(this->retry_.request.command)) {
+  if (this->retry_pending_ && is_installer(this->retry_.request.command) && !this->retry_.request.standby) {
     this->retry_pending_ = false;
     this->io_.result(this->retry_.request, Outcome::CANCELLED, nullptr);
   }

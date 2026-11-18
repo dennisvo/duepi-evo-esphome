@@ -82,7 +82,8 @@ void DuepiHub::recovery_started() {
 #ifdef USE_DUEPI_INSTALLER
   this->installer_permission_.disarm();
   this->custom_permission_.disarm();
-  if (this->installer_verifying_ && this->text_[5] != nullptr)
+  this->standby_permission_.disarm();
+  if (this->installer_verifying_ && !this->installer_expected_.standby && this->text_[5] != nullptr)
     this->text_[5]->publish_state("Installer write unverified: UART recovery");
   this->installer_verifying_ = false;
 #endif
@@ -104,12 +105,18 @@ bool DuepiHub::may_transmit(const Request &request, uint32_t now) {
   }
 #ifdef USE_DUEPI_INSTALLER
   if (request.command == Command::INSTALLER_READ)
-    return this->installer_permission_.enabled() && this->privileged_ready_();
+    return this->privileged_ready_() && (request.standby ?
+        this->standby_switch_ != nullptr && request.parameter == this->standby_parameter_ :
+        this->installer_permission_.enabled());
   if (request.command == Command::INSTALLER_WRITE)
-    return this->privileged_ready_() && this->state_.fields[0].data == 0 &&
-           this->installer_permission_.consume(request.token, now);
+    return this->installer_write_ready_() &&
+           (request.standby ? this->standby_switch_ != nullptr && request.parameter == this->standby_parameter_ &&
+                request.argument <= 1 && this->standby_permission_.consume(request.token, now) :
+                this->installer_permission_.consume(request.token, now));
   if (request.command == Command::CUSTOM)
-    return this->privileged_ready_() && this->custom_permission_.consume(request.token, now);
+    return this->privileged_ready_() &&
+           (request.payload[0] != 'S' || this->installer_write_ready_()) &&
+           this->custom_permission_.consume(request.token, now);
 #else
   if (is_installer(request.command)) return false;
 #endif
@@ -193,7 +200,9 @@ bool DuepiHub::submit_(Request request) {
 bool DuepiHub::request_off() { return this->submit_({Command::OFF}); }
 bool DuepiHub::request_start() {
   Request request;
-  this->policy_.start_request(this->state_, request, this->desired_level_);
+  uint16_t level = this->state_.fresh(Command::REQUESTED_POWER, millis(), this->stale_after_) ?
+      this->state_.fields[static_cast<size_t>(Command::REQUESTED_POWER)].data >> 8 : 1;
+  this->policy_.start_request(this->state_, request, level);
   return this->submit_(request);
 }
 bool DuepiHub::request_target(float value) {
@@ -207,28 +216,17 @@ bool DuepiHub::request_target(float value) {
 bool DuepiHub::request_level(uint16_t value) {
   if (value < 1 || value > 5) {
     this->reject_control("Rejected: requested power must be 1..5");
+    this->publish_(millis());
     return false;
   }
   if (this->state_.fresh(Command::PHASE, millis(), this->stale_after_) && this->state_.fields[0].data == 0) {
-    Request start;
-    this->policy_.start_request(this->state_, start, value);
-    if (this->engine_.recovering() || !this->may_transmit(start, millis())) {
-      this->reject_control("Rejected: local power selection requires fresh, synchronized, alarm-free Off state");
-      return false;
-    }
-    this->desired_level_ = value;
-    ++this->token_;
-    this->local_level_ = true;
-    this->has_level_ = true;
-    this->verification_pending_ = false;
-    char buffer[96];
-    std::snprintf(buffer, sizeof(buffer), "Power %u selected locally; no stove command sent", unsigned(value));
-    if (this->text_[4] != nullptr) this->text_[4]->publish_state(buffer);
-    this->publish_requested_level_(value);
+    this->reject_control("Rejected: power changes require ignition or heating; use HEAT to start");
     this->publish_(millis());
-    return true;
+    return false;
   }
-  return this->submit_({Command::SET_LEVEL, value});
+  bool accepted = this->submit_({Command::SET_LEVEL, value});
+  this->publish_(millis());
+  return accepted;
 }
 bool DuepiHub::request_reset() { return this->submit_({Command::RESET}); }
 
@@ -305,11 +303,9 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
     }
     if (changed && request.command == Command::FIRMWARE)
       ESP_LOGI(TAG, "Controller firmware: %s", this->state_.firmware.data());
-    if (request.command == Command::PHASE && response->word() != 0)
-      this->local_level_ = false;
     if (request.command == Command::PHASE && ControlPolicy::shutdown_phase(response->word())) {
       ESP_LOGD(TAG, "Ordinary shutdown observed: cancelling queued writes; reads remain available");
-      this->engine_.cancel_writes();
+      this->engine_.cancel_writes(false);
     }
     if (request.command == Command::TARGET) {
       this->retained_target_ = response->word();
@@ -319,9 +315,7 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
       this->power_feedback_unavailable_();
       this->verification_pending_ = false;
     }
-    if (request.command == Command::REQUESTED_POWER && !this->local_level_) {
-      this->desired_level_ = response->word();
-      this->has_level_ = true;
+    if (request.command == Command::REQUESTED_POWER) {
       if (this->verification_pending_ && this->verification_.command == Command::SET_LEVEL &&
           this->verification_.token == this->token_ && response->word() != this->verification_.argument) {
         char buffer[112];
@@ -373,19 +367,6 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
             unsigned(request.argument), OUTCOMES[static_cast<size_t>(outcome)]);
     if (this->text_[4] != nullptr && request.token == this->token_) this->text_[4]->publish_state(buffer);
     if (outcome == Outcome::ACKNOWLEDGED) {
-      if (request.command == Command::SET_LEVEL && request.token == this->token_) {
-        this->desired_level_ = request.argument;
-        this->local_level_ = false;
-        this->has_level_ = true;
-        this->publish_requested_level_(request.argument);
-      }
-        if ((request.command == Command::START_GENERIC || request.command == Command::START_9200 ||
-           request.command == Command::START_E670 || request.command == Command::START_E693) &&
-          request.token == this->token_) {
-        this->desired_level_ = request.argument;
-        this->local_level_ = false;
-        this->has_level_ = true;
-      }
       if (request.command == Command::SET_TARGET) {
         this->retained_target_ = request.argument;
         this->retained_target_requested_ = true;
@@ -417,13 +398,13 @@ void DuepiHub::publish_requested_level_(uint16_t level) {
 }
 
 void DuepiHub::publish_(uint32_t now) {
-  uint16_t phase = static_cast<uint16_t>(this->state_.fields[0].data >> 8);
   if (this->verification_pending_ && uint32_t(now - this->verification_at_) >= 15000)
     this->power_feedback_unavailable_();
-  if (this->sync_mask_ != 31 || !this->state_.healthy(now, this->stale_after_) || ControlPolicy::shutdown_phase(phase))
+  if (this->sync_mask_ != 31 || !this->state_.healthy(now, this->stale_after_) ||
+      !this->state_.fresh(Command::REQUESTED_POWER, now, this->stale_after_))
     this->publish_requested_level_(0);
   else
-    this->publish_requested_level_(this->has_level_ ? this->desired_level_ : 0);
+    this->publish_requested_level_(this->state_.fields[static_cast<size_t>(Command::REQUESTED_POWER)].data >> 8);
   if (this->climate_ != nullptr)
     this->climate_->publish_observed(this->state_, now, this->stale_after_, this->retained_target_);
   if (this->text_[8] != nullptr) {
@@ -463,6 +444,7 @@ void DuepiHub::schedule_(uint32_t now) {
       Command::INPUTS, Command::PCB,
       Command::FLUE_EXTRACTION_SPEED, Command::EXTRACTION_SENSOR_LEVEL,
       Command::FLUE_MOTOR_CORRECTION, Command::PELLET_CORRECTION, Command::CYCLE_TIME,
+      Command::EXHAUST_FAN_CORRECTION_D500,
       Command::TOTAL_RUNTIME, Command::SERVICE_RUNTIME};
   if (!this->cycle_active_ && uint32_t(now - this->cycle_at_) >= this->update_interval_) {
     this->cycle_active_ = true;
@@ -475,7 +457,7 @@ void DuepiHub::schedule_(uint32_t now) {
   while (this->cursor_ < count) {
     Command command = ORDER[this->cursor_++];
     if (command == Command::REQUESTED_POWER && !this->read_power_level_) continue;
-    if (command >= Command::FLUE_EXTRACTION_SPEED && command <= Command::CYCLE_TIME &&
+    if (command >= Command::FLUE_EXTRACTION_SPEED && command <= Command::EXHAUST_FAN_CORRECTION_D500 &&
         (command == Command::CYCLE_TIME ? this->text_[9] == nullptr :
          this->numeric_[static_cast<size_t>(command)] == nullptr)) continue;
     this->engine_.enqueue({command}, now);
@@ -484,6 +466,14 @@ void DuepiHub::schedule_(uint32_t now) {
   this->cycle_active_ = false;
   if (this->runtime_due_) this->runtime_at_ = now;
   this->runtime_due_ = false;
+#ifdef USE_DUEPI_INSTALLER
+  if (this->standby_switch_ != nullptr && !this->installer_verifying_ && this->privileged_ready_()) {
+    Request request{Command::INSTALLER_READ};
+    request.parameter = this->standby_parameter_;
+    request.standby = true;
+    this->engine_.enqueue(request, now);
+  }
+#endif
 }
 
 void DuepiHub::loop() {

@@ -4,6 +4,9 @@ Commands and labels follow MyDPremote 3.2.5. Framing and additional diagnostics 
 [mvroosmalen's ESPHome-Duepi](https://github.com/mvroosmalen1970/ESPHome-Duepi/tree/20171fd82f06662151f2857c5fd3bf4ac58a550b).
 Support can vary by controller and firmware.
 
+See [Stove and Integration Behavior](BEHAVIOR.md) for the distinction between
+selected power, actuator telemetry, observed stove behavior and integration policy.
+
 ## Controller Families
 
 Duepi distinguishes **Air** controllers for room-air heating from **Hydro**
@@ -50,6 +53,7 @@ Bodies below use the normal `Rxxxx0` request format.
 | DB00 | Extraction Sensor Level | First four hex digits; raw value |
 | DD00 | Flue Motor Correction | First byte; raw value |
 | DE00 | Pellet Correction | First byte; raw value |
+| D500 | Exhaust Fan Correction D500 (experimental; meaning unconfirmed) | Full six-hex-digit numeric reply; no scaling or units |
 | D800 | Cycle Time | First two bytes formatted as decimal fields, e.g. 10:11 |
 | D400 | Auger Level | 0..5; ignition can report 6/7 |
 | C500 | Power | Selected level, 1..5 |
@@ -68,9 +72,14 @@ Climate presets follow **Power** (`C500`), not Auger Level or Fan Speed.
 These are levels, not measured heat output or pellet flow. Disable `C500`
 polling with `read_power_level: false` if unsupported.
 
-`D200`, `DB00`, `DD00`, `DE00` and `D800` are polled only when their entities
+`D200`, `DB00`, `DD00`, `DE00`, `D500` and `D800` are polled only when their entities
 are configured. They default to diagnostic. Correction values have no assigned
 unit or signed conversion; Cycle Time is not interpreted as minutes/seconds.
+
+`exhaust_fan_correction_d500` is an experimental probe, not a confirmed correction
+or cFAN mapping. It preserves all 24 numeric reply bits to avoid assuming a byte
+width. Zero is published as zero; missing replies use normal timeout/recovery
+handling, not a fabricated zero. Both examples enable this probe for investigation.
 
 Out-of-range `C500` or `C600` replies mark that reading unavailable without
 triggering transport recovery. Missing or malformed replies use normal timeouts.
@@ -113,7 +122,7 @@ Default codes: 1 ignition failure, 2 extraction sensor, 3 insufficient extractio
 | Intent | Body | Restrictions |
 | --- | --- | --- |
 | Off | F000 | Explicit user request only |
-| Start | F001..F005 | Selected level 1..5; defaults to 1 until read or selected |
+| Start | F001..F005 | Fresh reported level 1..5; defaults to 1 if unavailable/stale |
 | Power | F001..F005 | Sent during ignition/heating |
 | Target | F2xx | Whole C encoded as two hex digits |
 | Alarm reset | D600 | Requires enable_reset |
@@ -123,11 +132,14 @@ Default codes: 1 ignition failure, 2 extraction sensor, 3 insufficient extractio
 Start requires fresh, synchronized readings, Off and no alarm. Firmware profile
 overrides affect startup only.
 
-Selecting Power while Off stores the next startup level in RAM without sending
-a command. During ignition/heating it sends `F00n`. After acknowledgement,
+Selecting Power while Off is rejected without sending or storing a choice:
+`F00n` is also the startup command, so it must not be sent as an Off-state power
+adjustment. During ignition/heating it sends `F00n`. After acknowledgement,
 polling refreshes the control prerequisites and reads `C500`. A matching reply
 within 15 seconds verifies the selected level, not physical output. Mismatch or
-unavailable feedback leaves the write unverified.
+unavailable feedback leaves the write unverified. Requests and ACKs do not change
+displayed power; only fresh controller feedback does. Stale/invalid feedback makes
+the power controls unknown. See [behavior](BEHAVIOR.md#power-and-actuators).
 
 `000000` acknowledges a write; it does not prove the setting took effect.
 A missing ACK leaves the outcome unknown. Writes are never retried automatically.
@@ -142,9 +154,15 @@ Installer payloads replace the complete six-character payload; do not prefix R.
 | Write parameter | Sppvv0 | pp = parameter byte, vv = value byte, both hex |
 
 Installer writes require a zero-data ACK and matching readback for verification.
-Parameter meanings and recommended values are not provided.
+They require a fresh known phase outside ignition (`01xx`), checked at enqueue
+and send; heating, cleaning, eco and shutdown are not excluded. Explicit Off
+submission cancels older queued writes. General operations require Installer
+Access. Optional `standby_mode` uses an independent exact-address 0/1 permission;
+address 28 was confirmed on the tested stove, not established as universal.
+See [parameter-change guidance](../README.md#read-or-write-a-parameter).
 
 Custom commands use either a four-hex-digit body (`Rxxxx0`) or a complete
 six-character raw payload of uppercase letters and digits.
 They require Installer Access and retain shutdown and pending-Off protection.
+Raw installer-write payloads beginning with `S` also retain the non-ignition guard.
 They are never retried, even when used for reads.

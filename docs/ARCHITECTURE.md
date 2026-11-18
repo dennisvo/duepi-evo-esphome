@@ -1,5 +1,8 @@
 # Architecture
 
+For user-visible control rules and stove observations, see
+[Stove and Integration Behavior](BEHAVIOR.md). This document covers implementation.
+
 ## Boundaries
 
 Python schemas run on the build host; C++ owns runtime behavior. YAML describes
@@ -104,9 +107,12 @@ cannot be rolled back by queue cancellation or runtime disable.
 
 An accepted Off blocks conflicting write submissions while it is queued,
 initialization-held or active. On observing phase `0301`, `0801` or `0802`, the hub
-cancels queued/held writes, including Off, while preserving recognized reads and
-read retries. New writes and send-time writes are blocked, including installer
-writes and custom/raw requests. Cancellation never recalls an active frame or
+cancels queued/held ordinary writes, including Off, while preserving recognized
+reads, read retries and typed installer parameter writes. New ordinary writes and
+custom/raw requests are blocked. Parameter writes, including standby, instead
+require a known non-ignition phase and remain available while Off is pending;
+explicit Off submission still cancels older queued parameter writes.
+Cancellation never recalls an active frame or
 replays work after shutdown. Cancellation is a distinct outcome from rejection,
 timeout and an indeterminate transmitted write.
 
@@ -138,21 +144,22 @@ Rejected, cancelled and indeterminate writes cannot update the retained value.
 Climate custom presets `Min`, `Low`, `Medium`, `High` and `Max` map to controller
 levels 1 through 5 through the shared level-request entry point. They never imply
 ignition or a temperature change.
-Off-state selections are local RAM choices gated by fresh synchronized, alarm-free
-Off state; they send nothing and take precedence over `C500` until Start is
-acknowledged or the stove is observed leaving Off, including a panel start.
-Default startup uses `F00n` at the selected level, or 1
-before any selection/report. Explicit firmware profiles retain legacy start
+Off-state selections are rejected without storing a choice or sending a command.
+Default startup uses `F00n` at fresh controller-reported power, or level 1 when
+power feedback is unavailable/stale. Explicit firmware profiles retain legacy start
 overrides; firmware IDs no longer select these automatically.
 
-During ignition/heating, a level ACK updates the displayed choice as unverified.
-`C500` observations publish the numeric power level and, absent a local
-choice, update the preset/number. A fresh match verifies the register; a mismatch
-publishes the reported choice and records both values. Invalid data invalidates
-the sensor without recovery. Stale reports remain unverified retained choices.
-Confirmation is reported through the transaction result. Recovery, stale core
-telemetry and ordinary shutdown hide the preset; Off no longer clears a usable
-selection. Nothing is persisted or replayed and boot/reconnect only reads.
+During ignition/heating, requests and ACKs leave displayed power unchanged.
+The preset/number is derived directly from a fresh `C500` field, gated by complete
+synchronization and healthy core observations; no desired/local power cache exists.
+Rejected and pending UI requests republish reported state. A fresh match verifies
+the register; a mismatch publishes reported power and records both values.
+Invalid feedback invalidates the sensor and controls without recovery. Recovery,
+stale core telemetry or stale power hides the preset and makes the number unknown.
+Fresh power remains visible during Off, eco and shutdown without authorizing writes.
+Nothing is persisted or replayed and boot/reconnect only reads. A combined
+preset/HEAT call while Off rejects the preset, then attempts Start using
+reported/default power; no deferred level command is queued.
 `D300` Fan Speed and `D400` Auger Level never verify selected power.
 
 The frame parser validates printable payloads and checksum, preserving the raw
@@ -169,14 +176,17 @@ buttons, API actions and YAML actions use these shared request entry points.
 No arming button or YAML action is exposed. Disabling Installer Access clears both permissions
 and cancels only queued advanced work, including initialization-held requests and
 pending advanced retries. An already transmitted request is not undone.
-Installer byte bounds and off-state are rechecked.
+Installer byte bounds and known non-ignition phase are rechecked. This policy
+permits typed parameter writes in heating, cleaning, eco and ordinary shutdown;
+all freshness, synchronization and one-shot requirements remain in force.
 Custom access intentionally bypasses the semantic policy but still requires
 configuration, runtime enable, fresh core state and one-shot authorization.
 Ordinary-shutdown and pending-Off protection apply before this bypass and at
 custom submission; custom payloads are never assumed read-only.
+Raw payloads beginning with `S` additionally retain the installer ignition guard.
 
-`enable_installer` is the single build-host opt-in for installer, custom and raw
-capabilities. It generates `USE_DUEPI_INSTALLER`, their configuration entities,
+`enable_installer` opts into general installer, custom and raw capabilities.
+It generates `USE_DUEPI_INSTALLER`, their configuration entities,
 and native API actions when API is configured. Without the define, advanced hub
 methods, permission state, protocol builders and automation implementation are
 excluded by the preprocessor. Initialization remains independent. When included,
@@ -184,6 +194,16 @@ one Installer Access switch controls both permission paths and always starts off
 neither access nor command arming is restored from preferences. The examples
 contain the normal entities. Reset and installer support remain independent
 hub opt-ins; enabling runtime access never sends a stove command itself.
+
+`standby_mode` independently includes `USE_DUEPI_INSTALLER` and one
+`DuepiStandbySwitch`, without enabling general installer/custom/raw permissions
+or generating their UI/API. Its own one-shot permission permits only its configured
+address with byte 0/1. An internal request-origin marker is checked at transmission
+and propagated to readback; disabling general access skips this work. It shares
+the single installer verification path. End-of-cycle parameter polls use token 0
+and do not overwrite the manual Installer Result. Only parameter reads publish
+switch state; there is no startup restore/write, optimistic state or replay.
+The last confirmed boolean remains visible on staleness or unsupported bytes.
 
 The hub's configurable whole-Celsius command range defaults to 10..25, bounded
 within the supported protocol range 10..35. It drives both control policy and
@@ -241,8 +261,9 @@ synthetic/derived, not hardware captures. Schema tests cover configuration
 validation and action registration.
 
 The [validation runner](../tests/validate_examples.py) accepts `config` or
-`compile`, optionally followed by `standard`, `controls`, `installer` or `c6-standard`.
-Without a variant argument it checks all four. It creates temporary variants of
+`compile`, optionally followed by `standard`, `controls`, `installer`, `standby`,
+`installer-standby` or `c6-standard`.
+Without a variant argument it checks all six. It creates temporary variants of
 the C3 and C6 examples using the current local component source and public dummy
 secrets. Logs and binaries stay under ignored `.validation-build`; the runner
 never uploads, and its binaries must not be deployed. Compilation checks the

@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import uart
+from esphome.components import switch as esphome_switch, uart
 from esphome.const import CONF_ID
 
 DEPENDENCIES = ["uart"]
@@ -10,6 +10,13 @@ MULTI_CONF = False
 duepi_ns = cg.esphome_ns.namespace("duepi")
 DuepiHub = duepi_ns.class_("DuepiHub", cg.Component, uart.UARTDevice)
 FirmwareProfile = duepi_ns.enum("FirmwareProfile", is_class=True)
+DuepiStandbySwitch = duepi_ns.class_("DuepiStandbySwitch", esphome_switch.Switch)
+STANDBY_SCHEMA = esphome_switch.switch_schema(
+    DuepiStandbySwitch, default_restore_mode="DISABLED", block_inverted=True, entity_category="config"
+).extend({
+    cv.Required("parameter"): cv.int_range(min=0, max=255),
+    cv.Optional("name", default="Standby Mode"): cv.string_strict,
+})
 PROFILES = {
     "auto": FirmwareProfile.AUTO,
     "9200": FirmwareProfile.FW_9200,
@@ -51,6 +58,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional("max_temperature", default=25): cv.int_range(min=10, max=35),
             cv.Optional("firmware_profile", default="auto"): cv.enum(PROFILES),
             cv.Optional("enable_installer", default=False): cv.boolean,
+            cv.Optional("standby_mode"): STANDBY_SCHEMA,
             cv.Optional("enable_custom_commands"): cv.invalid("Use enable_installer to include all advanced capabilities"),
             cv.Optional("enable_raw_commands"): cv.invalid("Use enable_installer to include all advanced capabilities"),
             **{
@@ -83,15 +91,20 @@ async def to_code(config):
     cg.add(hub.set_min_temperature(config["min_temperature"]))
     cg.add(hub.set_max_temperature(config["max_temperature"]))
     cg.add(hub.set_firmware_profile(config["firmware_profile"]))
+    if config["enable_installer"] or "standby_mode" in config:
+        cg.add_define("USE_DUEPI_INSTALLER")
+    if "standby_mode" in config:
+        standby = await esphome_switch.new_switch(config["standby_mode"])
+        cg.add(standby.set_parent(hub))
+        cg.add(hub.set_standby_mode(standby, config["standby_mode"]["parameter"]))
     if config["enable_installer"]:
         from .installer import to_code as installer_to_code
 
-        cg.add_define("USE_DUEPI_INSTALLER")
         cg.add(hub.set_enable_installer(True))
         cg.add(hub.set_enable_custom_commands(True))
         cg.add(hub.set_enable_raw_commands(True))
         await installer_to_code(config["_installer_entities"], hub, str(config[CONF_ID]))
     for key in TIMINGS:
-        if key == "arming_timeout" and not config["enable_installer"]:
+        if key == "arming_timeout" and not config["enable_installer"] and "standby_mode" not in config:
             continue
         cg.add(getattr(hub, f"set_{key}")(config[key]))

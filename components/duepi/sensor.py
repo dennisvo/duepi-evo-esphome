@@ -22,12 +22,13 @@ FIELDS = {
     "extraction_sensor_level": (16, None, 0),
     "flue_motor_correction": (17, None, 0),
     "pellet_correction": (18, None, 0),
+    "exhaust_fan_correction_d500": (20, None, 0),
 }
 
 DIAGNOSTIC_FIELDS = {
     "phase_code", "d3000", "flue_temperature", "exhaust_speed", "alarm_code", "inputs_code", "pcb_temperature",
     "total_runtime_counter", "service_runtime_counter", "flue_extraction_speed",
-    "extraction_sensor_level", "flue_motor_correction", "pellet_correction",
+    "extraction_sensor_level", "flue_motor_correction", "pellet_correction", "exhaust_fan_correction_d500",
 }
 
 CONFIG_SCHEMA = cv.Schema(

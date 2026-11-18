@@ -10,6 +10,26 @@ namespace duepi {
 
 static const char *const TAG = "duepi";
 
+void DuepiStandbySwitch::write_state(bool value) {
+  this->parent_->request_standby(value);
+  if (this->known_) this->publish_state(this->state);
+}
+
+bool DuepiHub::request_standby(bool value) {
+  if (this->standby_switch_ == nullptr || !this->installer_write_ready_() || this->installer_verifying_) {
+    this->reject_control("Standby change rejected: not configured, busy, stale, unknown phase or ignition");
+    return false;
+  }
+  Request request{Command::INSTALLER_WRITE};
+  request.parameter = this->standby_parameter_;
+  request.argument = value ? 1 : 0;
+  request.token = ++this->token_;
+  request.standby = true;
+  if (!this->standby_permission_.arm(millis()) || !this->standby_permission_.reserve(request.token, millis()))
+    return false;
+  return this->engine_.enqueue(request, millis());
+}
+
 void DuepiInstallerValue::control(float value) {
   if (std::isfinite(value) && std::floor(value) == value && value >= 0 && value <= 255)
     this->publish_state(value);
@@ -28,7 +48,7 @@ bool DuepiHub::installer_selected(bool write) {
   return this->request_installer_write(parameter, static_cast<int>(this->installer_numbers_[1]->state));
 }
 
-#ifdef USE_API
+#if defined(USE_API) && defined(USE_API_CUSTOM_SERVICES)
 void DuepiInstallerAPI::setup() {
   this->register_service(&DuepiInstallerAPI::read, this->prefix_ + "_installer_read", {"parameter"});
   this->register_service(&DuepiInstallerAPI::write, this->prefix_ + "_installer_write", {"parameter", "value"});
@@ -83,13 +103,18 @@ bool DuepiHub::privileged_ready_() const {
          this->state_.fresh(Command::BOARD, now, this->stale_after_) && !this->engine_.recovering();
 }
 
+bool DuepiHub::installer_write_ready_() const {
+  uint16_t phase = this->state_.fields[0].data >> 8;
+  return this->privileged_ready_() && known_phase(phase) && (phase >> 8) != 1;
+}
+
 bool DuepiHub::arm_installer_write() {
-  bool armed = !this->write_blocked_(Command::INSTALLER_WRITE) && this->privileged_ready_() &&
+  bool armed = this->installer_write_ready_() &&
                this->installer_permission_.arm(millis());
   ESP_LOGD(TAG, "Installer one-shot arming %s (lifetime %lu ms; requires enabled, fresh, synchronized access)",
            armed ? "accepted" : "rejected", static_cast<unsigned long>(this->installer_permission_.lifetime));
   if (!armed) {
-    const char *reason = "Installer write rejected: disabled, unsynchronized, stale, shutdown or OFF pending";
+    const char *reason = "Installer write rejected: disabled, unsynchronized, stale, unknown phase or ignition";
     if (this->text_[5] != nullptr) this->text_[5]->publish_state(reason);
     this->reject_control(reason);
   }
@@ -120,9 +145,9 @@ bool DuepiHub::installer_read(int parameter) {
 }
 
 bool DuepiHub::installer_write(int parameter, int value) {
-  if (parameter < 0 || parameter > 255 || value < 0 || value > 255 || !this->privileged_ready_() ||
-  this->write_blocked_(Command::INSTALLER_WRITE) || this->installer_verifying_ || this->state_.fields[0].data != 0) {
-    const char *reason = "Installer write rejected: range, busy, stale, stove not off or OFF pending";
+  if (parameter < 0 || parameter > 255 || value < 0 || value > 255 || !this->installer_write_ready_() ||
+      this->installer_verifying_) {
+    const char *reason = "Installer write rejected: range, busy, stale, unknown phase or ignition";
     if (this->text_[5] != nullptr) this->text_[5]->publish_state(reason);
     this->reject_control(reason);
     return false;
@@ -143,7 +168,8 @@ bool DuepiHub::installer_write(int parameter, int value) {
 bool DuepiHub::send_custom(const std::string &command, bool raw) {
   Request request;
   if (!custom_request(command, raw, request) || (raw && !this->raw_enabled_) ||
-      this->write_blocked_(Command::CUSTOM) || !this->privileged_ready_() || this->installer_verifying_) {
+      this->write_blocked_(Command::CUSTOM) || !this->privileged_ready_() || this->installer_verifying_ ||
+      (request.payload[0] == 'S' && !this->installer_write_ready_())) {
     this->reject_control("Custom command rejected: format, disabled, busy, stale, shutdown or OFF pending");
     return false;
   }
@@ -192,6 +218,14 @@ bool DuepiHub::handle_privileged_result_(const Request &request, Outcome outcome
       ESP_LOGW(TAG, "%s", status);
     }
     if (outcome == Outcome::ACKNOWLEDGED && response != nullptr) {
+      if (request.command == Command::INSTALLER_READ && this->standby_switch_ != nullptr &&
+          request.parameter == this->standby_parameter_) {
+        if (response->byte() <= 1)
+          this->standby_switch_->publish_observed(response->byte() == 1);
+        else
+          ESP_LOGW(TAG, "Standby parameter %u returned %u, expected 0 or 1; state not updated",
+                   unsigned(request.parameter), unsigned(response->byte()));
+      }
       if (request.command == Command::INSTALLER_WRITE) {
         this->installer_expected_ = request;
         this->installer_verifying_ = true;
@@ -199,7 +233,8 @@ bool DuepiHub::handle_privileged_result_(const Request &request, Outcome outcome
         Request readback{Command::INSTALLER_READ};
         readback.parameter = request.parameter;
         readback.token = request.token;
-        if (this->installer_permission_.enabled()) {
+        readback.standby = request.standby;
+        if (request.standby || this->installer_permission_.enabled()) {
           if (this->engine_.enqueue(readback, millis())) {
             std::snprintf(status, sizeof(status), "PR%u write acknowledged; awaiting readback", unsigned(request.parameter));
           } else {
@@ -225,8 +260,13 @@ bool DuepiHub::handle_privileged_result_(const Request &request, Outcome outcome
         std::snprintf(status, sizeof(status), "PR%u read value %u", unsigned(request.parameter), unsigned(response->byte()));
       }
     }
-    if (outcome == Outcome::ACKNOWLEDGED) ESP_LOGI(TAG, "Installer #%lu: %s", static_cast<unsigned long>(request.token), status);
-    if (this->text_[5] != nullptr) this->text_[5]->publish_state(status);
+    if (outcome == Outcome::ACKNOWLEDGED) {
+      if (request.standby && request.token == 0)
+        ESP_LOGD(TAG, "Standby poll: %s", status);
+      else
+        ESP_LOGI(TAG, "Installer #%lu: %s", static_cast<unsigned long>(request.token), status);
+    }
+    if (!request.standby && this->text_[5] != nullptr) this->text_[5]->publish_state(status);
   } else {
     bool current = request.token == this->custom_response_token_;
     std::snprintf(status, sizeof(status), "Custom #%u: %s", unsigned(request.token), OUTCOMES[static_cast<size_t>(outcome)]);

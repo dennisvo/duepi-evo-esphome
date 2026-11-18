@@ -25,7 +25,7 @@ class TransactionEngine {
   void tick(uint32_t now);
   void receive(uint8_t byte, uint32_t now);
   void cancel_queued();
-  void cancel_writes();
+  void cancel_writes(bool include_parameters = true);
   bool off_pending() const;
 #ifdef USE_DUEPI_INSTALLER
   void cancel_installer();

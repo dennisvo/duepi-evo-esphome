@@ -40,6 +40,22 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(cv.Invalid):
             duepi.CONFIG_SCHEMA([{"id": "stove"}, {"id": "second_stove"}])
 
+    def test_standby_configuration(self):
+        config = self.config(standby_mode={"parameter": 28})
+        self.assertFalse(config["enable_installer"])
+        self.assertNotIn("_installer_entities", config)
+        self.assertEqual(config["standby_mode"]["parameter"], 28)
+        self.assertEqual(config["standby_mode"]["name"], "Standby Mode")
+        self.assertEqual(config["standby_mode"]["entity_category"], "config")
+        self.assertEqual(config["standby_mode"]["restore_mode"], "DISABLED")
+        for parameter in (-1, 256, 1.5):
+            CORE.reset()
+            with self.assertRaises(cv.Invalid):
+                self.config(standby_mode={"parameter": parameter})
+        CORE.reset()
+        with self.assertRaises(cv.Invalid):
+            self.config(standby_mode={"name": "Standby"})
+
     def test_power_level_configuration(self):
         self.assertTrue(self.config()["read_power_level"])
         self.assertFalse(self.config(read_power_level=False)["read_power_level"])
@@ -59,6 +75,7 @@ class ConfigTests(unittest.TestCase):
             "extraction_sensor_level": 16,
             "flue_motor_correction": 17,
             "pellet_correction": 18,
+            "exhaust_fan_correction_d500": 20,
         }
         config = sensors.CONFIG_SCHEMA({
             "duepi_id": "stove",
