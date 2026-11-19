@@ -64,8 +64,14 @@ republishes the reported selection and explains rejection in Transaction Result.
 
 A request or acknowledgement never changes the displayed power. The last report
 remains displayed only while fresh and synchronized core readings are healthy.
+A power-write acknowledgement queues a priority `C500` read ahead of background
+telemetry when `read_power_level` is enabled. Pending writes retain precedence;
+configured transaction spacing and optional initialization still apply. Normal
+polling resumes afterward. This sequencing is experimental, not a confirmed fix
+for remote power changes failing to apply on the tested stove.
 A fresh matching `C500` reply can verify a write; a mismatch displays the reported
-level and records both values in Transaction Result. Auger and fan readings never
+level and records both values in Transaction Result while verification remains
+pending until a match or the existing 15-second deadline. Auger and fan readings never
 verify selected power. Values outside 1..5 make the Power sensor and controls
 unknown without causing UART recovery. Disabling `read_power_level` prevents
 this polling and power-write verification, not power commands; controls remain
@@ -129,6 +135,26 @@ therefore does not prove a stopped stove.
 Sources: [control policy](../components/duepi/control.h),
 [phase labels](../components/duepi/protocol.cpp),
 [climate publication](../components/duepi/duepi_climate.cpp).
+
+### Cycle Time
+
+**Cycle Time** (`D800`) shows the controller's active countdown as minutes:seconds,
+not elapsed burn time. Its purpose depends on the operating phase:
+
+- During ignition, a timer can span multiple subphases or be replaced before
+	reaching zero. In the observed sequence, it reloaded at fuel loading (`0x0102`),
+	continued through flame (`0x0103`), then changed on entry to ventilation (`0x0104`).
+- During heating (`0x0201`), it counts down to the next periodic cleaning cycle.
+	The observed reload to about 45 minutes matched the configured 45-minute cleaning
+	interval; this is a setting, not a universal default.
+
+A phase-code change does not necessarily reset the timer, and the stove need not
+remain in a phase until it reaches zero. Durations and timer behavior may vary
+by controller and phase.
+
+The component displays the returned minutes and seconds; it does not calculate
+the countdown or use it to control stage transitions. Polling may not capture
+the exact zero/transition instant.
 
 ## Temperature Targets
 
@@ -197,8 +223,10 @@ latest normal command can be verified within the 15-second readback window:
 target by target readback, power by `C500`, Off by reported Off, Start by reported
 ignition. Reset remains unverified. These reports do not prove physical safety.
 Successful background reads update telemetry and freshness without changing
-Transaction Result. Before the first normal command, exhausted read timeouts
-can appear there; later background timeouts do not overwrite command results.
+Transaction Result. Before the first numbered normal or advanced request,
+exhausted read timeouts can appear there; later background timeouts do not
+overwrite command results. Parameter operations report to Installer Result;
+custom outcomes use Transaction Result, with reply bytes in Custom Response Data.
 Read timeouts also produce rate-limited warnings, and individual transactions
 remain available in DEBUG logs.
 
@@ -206,7 +234,10 @@ General installer operations require build-time inclusion, Installer Access and
 fresh synchronized prerequisites. Access starts off after reboot. Turning it off
 cancels pending general advanced work, not an already transmitted write or
 independent standby work. Custom responses remain diagnostic data, never
-normal telemetry. Sending a custom command invalidates observations and cancels
+normal telemetry. Custom commands bypass normal alarm and known-phase checks,
+but retain fresh synchronized prerequisites and ordinary-shutdown/pending-Off
+protection; raw `S` writes additionally require a known non-ignition phase.
+Sending a custom command invalidates observations and cancels
 other unsent work. Installer write-readback completion also requires a fresh
 observation cycle before normal controls resume.
 

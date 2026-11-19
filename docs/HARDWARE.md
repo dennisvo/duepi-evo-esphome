@@ -42,10 +42,12 @@ precautions below before following the diagram.
 
 ![Duepi EVO stove connected through a SparkFun TXB0104 level translator to a Seeed Studio XIAO ESP32-C3](images/esp32-sparkfun-wiring.png)
 
-See below for detailed pinout and hardware references on ESP32 and the Sparfun.
+See below for detailed ESP32 and SparkFun pinout references.
 
-**Current status**: This is not yet confirmed to work. After testing with the Sparkfun something
-blocked the signals between the ESP32 and the stove. After directly plugging the tx/rx signals in the ESP32 (without the Sparkfun in between) things started to work. But since we are feeding 5V TTL signals into a 3.3V chip, this might damage the chip in the longer run.
+**Current status:** the TXB0104 arrangement is not a validated working solution.
+Testing found that signals were blocked with the translator present; communication
+worked with direct TX/RX connections. Direct connection is not recommended:
+5 V signals can damage ESP32 GPIO even when communication appears to work.
 
 **Please note:** do not connect the ESP32 both to the stove and USB at the same time, to prevent damage to your pc and the stove! Only connect
 it to USB for initial flashing and then disconnect.
@@ -55,8 +57,10 @@ it to USB for initial flashing and then disconnect.
 The tested stove's UART logic levels have been confirmed as 5 V with a multimeter.
 Although users report working setups with direct ESP-to-pellet-stove connections,
 ESP32 GPIO expects 3.3 V logic and is not 5 V tolerant. A suitable 5 V / 3.3 V UART
-logic-level shifter (like the Sparkfun above) is advisable: a working direct connection
-does not establish electrical safety, and 5 V on an ESP32 input can cause damage.
+logic-level translator is needed for those levels; the TXB0104 arrangement above
+has not worked in testing and must not be treated as a proven solution. A working
+direct connection does not establish electrical safety, and 5 V on an ESP32 input
+can cause damage. The TXU0202 is a candidate for evaluation, not a validated replacement.
 
 Verify the signal levels and interface requirements on your particular controller
 before connecting either UART line. The +5V supply pin alone does not establish
@@ -95,8 +99,9 @@ Reference: [Seeed Studio XIAO ESP32-C3 Pinout and Hardware Guide](https://wiki.s
 UART TX is D6 (GPIO16) and RX is D7 (GPIO17). Although the D6/D7 labels match
 the C3, the GPIO numbers are different. Select the appropriate ESPHome board
 target and update the UART GPIOs rather than using the C3 example unchanged.
-Use the [C6 configuration example](../examples/esp32-c6.yaml). This board has not
-yet been build-tested with this component.
+Use the [C6 configuration example](../examples/esp32-c6.yaml). The C3 and C6 examples
+have been validated and compiled; that does not verify physical wiring or controller
+compatibility. See [current build status](../README.md#status-and-scope).
 
 ![Seeed Studio XIAO ESP32-C6 front pinout](https://files.seeedstudio.com/wiki/SeeedStudio-XIAO-ESP32C6/img/XIAO_ESP32-C6_front_pinout.png)
 

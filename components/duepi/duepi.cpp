@@ -327,11 +327,10 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
     if (request.command == Command::REQUESTED_POWER) {
       if (this->verification_pending_ && this->verification_.command == Command::SET_LEVEL &&
           this->verification_.token == this->token_ && response->word() != this->verification_.argument) {
-        char buffer[112];
-        std::snprintf(buffer, sizeof(buffer), "set_level #%u requested=%u reported=%u: readback mismatch",
+        char buffer[144];
+        std::snprintf(buffer, sizeof(buffer), "set_level #%u requested=%u reported=%u: readback mismatch (verification pending)",
                       unsigned(this->verification_.token), unsigned(this->verification_.argument), unsigned(response->word()));
         if (this->text_[4] != nullptr) this->text_[4]->publish_state(buffer);
-        this->verification_pending_ = false;
       }
     }
     if (this->verification_pending_ && this->verification_.token == this->token_ &&
@@ -383,6 +382,8 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
       this->verification_ = request;
       this->verification_pending_ = true;
       this->verification_at_ = millis();
+      if (request.command == Command::SET_LEVEL && this->read_power_level_)
+        this->engine_.enqueue({Command::REQUESTED_POWER}, millis(), true);
       if (request.command == Command::OFF || request.command == Command::RESET ||
           request.command == Command::START_9200 || request.command == Command::START_E670 ||
           request.command == Command::START_E693 || request.command == Command::START_GENERIC) this->sync_mask_ = 0;
@@ -485,16 +486,17 @@ void DuepiHub::schedule_(uint32_t now) {
 }
 
 void DuepiHub::loop() {
-  uint32_t now = millis();
   uint8_t byte = 0;
   for (size_t budget = 0; budget < 64 && this->available() != 0; ++budget) {
     if (!this->read_byte(&byte)) break;
-    this->engine_.receive(byte, now);
+    this->engine_.receive(byte, millis());
   }
+  uint32_t now = millis();
   if (this->available() == 0) {
     this->schedule_(now);
-    this->engine_.tick(now);
+    this->engine_.tick(millis());
   }
+  now = millis();
   if (uint32_t(now - this->last_publish_) >= 1000) {
     uint32_t errors = this->engine_.parser_errors();
     if (errors != this->logged_parser_errors_) {

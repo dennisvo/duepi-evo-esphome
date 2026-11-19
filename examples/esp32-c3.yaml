@@ -63,6 +63,16 @@ duepi:
   init_command: false
   update_interval: 10s
   stale_after: 45s
+  # Optional: let the stove stop/restart automatically around its temperature
+  # target, according to its own standby settings; not an immediate on/off command.
+  # Uncomment to add a Home Assistant switch named Standby Mode, allowing you
+  # to enable or disable the stove's standby mode directly from Home Assistant.
+  # Parameter 28 (0=off, 1=on) is confirmed for Artel Next Petit 6 only.
+  # Confirm the parameter for your controller before enabling; see docs/PARAMETERS.md.
+  # Works with enable_installer: false; no Installer Access or startup write.
+  # standby_mode:
+  #   parameter: 28
+  #   name: Standby Mode
 
 number:
   - platform: duepi

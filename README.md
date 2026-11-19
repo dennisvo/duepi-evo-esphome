@@ -114,7 +114,7 @@ retried. Use the stove's own safety controls; see
 
 ## Development
 
-Use Python 3.13 and [the pinned dependencies](requirements-dev.txt). See
+Use Python 3.13 and [the development dependencies](requirements-dev.txt). See
 [development details](docs/ARCHITECTURE.md#development) for test commands, build
 variants and CI requirements, and [device setup](docs/CONFIGURATION.md#device-setup)
 for loading unpublished local components. Validation binaries use public dummy
@@ -126,12 +126,9 @@ In priority order:
 
 - [ ] Fix remote power-level changes not applying; compare panel and remote changes
     against selected power level
-- [ ] Complete the protocol reference with full alarm and phase tables,
-	numeric-code explanations, known but unimplemented reads and newer-app findings.
 - [ ] Verify alarm and input meanings for identified controllers and firmware,
 	including the observed input value `0x0800`.
-- [ ] Confirm diagnostic units, correction signedness, cycle-time interpretation
-	and runtime-counter units.
+- [ ] Confirm diagnostic units, correction signedness and runtime-counter units.
 - [ ] Establish installer parameter mappings with documented addresses, scaling,
 	ranges and firmware applicability; neither analyzed app provides a catalogue.
 - [ ] Record verified controller capabilities, including supported reads and

@@ -48,6 +48,19 @@ class TestHub : public DuepiHub {
   void report(const Request &request, Outcome outcome) { this->result(request, outcome, nullptr); }
 };
 
+class ClockAdvancingHub : public TestHub {
+ public:
+  void result(const Request &request, Outcome outcome, const Response *response) override {
+    ++test_now;
+    TestHub::result(request, outcome, response);
+  }
+  void buffer_reply(const char *data) {
+    WireFrame frame{};
+    CHECK(encode_payload(data, 6, frame));
+    this->input.insert(this->input.end(), frame.begin(), frame.end());
+  }
+};
+
 #ifdef USE_DUEPI_INSTALLER
 class TestInstallerValue : public DuepiInstallerValue {
  public:
@@ -131,14 +144,14 @@ void power_preset_tests() {
     climate::ClimateCall invalid;
     invalid.custom_preset = "Power level 6";
     climate.control(invalid);
-    CHECK(hub.queued() == 0);
+    CHECK(hub.queued() == 1);
     CHECK(climate.get_custom_preset() == call.custom_preset);
     if (level == 1) {
       hub.observe(Command::PHASE, 0);
     } else if (level == 2) {
       climate.control(call);
       hub.observe(Command::PHASE, 0x030100);
-      CHECK(hub.queued() == 0);
+      CHECK(hub.queued() == 1);
     } else if (level == 3) {
       test_now = 45001;
       hub.publish();
@@ -319,6 +332,11 @@ void power_feedback_tests() {
     CHECK(status.state.find("requested=3 reported=1: readback mismatch") != std::string::npos);
     CHECK(number.state == 1);
     CHECK(climate.get_custom_preset() == "Min");
+    CHECK(status.state.find("verification pending") != std::string::npos);
+    hub.observe(Command::REQUESTED_POWER, 0x000300);
+    CHECK(number.state == 3 && reported.state == 3);
+    CHECK(climate.get_custom_preset() == "Medium");
+    CHECK(status.state.find("verified by readback") != std::string::npos);
     CHECK(hub.request_level(4));
     test_now = 301;
     hub.tick();
@@ -332,6 +350,8 @@ void power_feedback_tests() {
     test_now = 401;
     hub.tick();
     hub.receive("000000");
+    hub.observe(Command::REQUESTED_POWER, 0x000100);
+    CHECK(status.state.find("verification pending") != std::string::npos);
     test_now = 15401;
     hub.observe(Command::REQUESTED_POWER, 0x000200);
     CHECK(status.state.find("readback unavailable") != std::string::npos);
@@ -360,12 +380,12 @@ void power_feedback_tests() {
     hub.tick();
     test_now = 1;
     hub.receive("000000");
-    const char *replies[] = {"A06000", "000000", "020100", "00D700", "000000", "000300"};
+    const char *replies[] = {"000300", "A06000", "000000", "020100", "00D700", "000000"};
     for (size_t index = 0; index < 6; ++index) {
       test_now = 101 + index * 100;
       hub.poll();
       CHECK(hub.writes.size() == index + 2);
-      if (index == 5)
+      if (index == 0)
         CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RC5000");
       hub.receive(replies[index]);
     }
@@ -375,6 +395,50 @@ void power_feedback_tests() {
     hub.recover();
     hub.publish();
     CHECK(std::isnan(number.state));
+  }
+  for (bool power_already_queued : {false, true}) {
+    test_now = 0;
+    TestHub hub;
+    hub.set_inter_transaction_delay(600);
+    hub.setup();
+    hub.synchronize();
+    hub.observe(Command::PHASE, 0x020100);
+    CHECK(hub.queue({Command::FLUE}));
+    if (power_already_queued) CHECK(hub.queue({Command::REQUESTED_POWER}));
+    CHECK(hub.queue({Command::TARGET}));
+    CHECK(hub.request_level(3));
+    hub.tick();
+    test_now = 1;
+    hub.receive("000000");
+    CHECK(hub.queued() == 3);
+    test_now = 600;
+    hub.poll();
+    CHECK(hub.writes.size() == 1);
+    test_now = 601;
+    hub.poll();
+    CHECK(hub.writes.size() == 2);
+    CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RC5000");
+    hub.receive("000300");
+    test_now = 1201;
+    hub.poll();
+    CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RD0000");
+    CHECK(hub.writes.size() == 3 && hub.queued() == 1);
+  }
+  {
+    test_now = 0;
+    TestHub hub;
+    hub.setup();
+    hub.synchronize();
+    hub.observe(Command::PHASE, 0x020100);
+    CHECK(hub.request_level(3));
+    hub.tick();
+    CHECK(hub.queue({Command::FLUE}));
+    CHECK(hub.request_off());
+    test_now = 1;
+    hub.receive("000000");
+    test_now = 101;
+    hub.poll();
+    CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RF0000");
   }
   for (bool enabled : {false, true}) {
     test_now = 0;
@@ -391,6 +455,12 @@ void power_feedback_tests() {
       hub.receive(replies[index]);
       test_now += 100;
     }
+    hub.synchronize();
+    hub.observe(Command::PHASE, 0x020100);
+    CHECK(hub.request_level(3));
+    hub.tick();
+    hub.receive("000000");
+    CHECK(hub.queued() == (enabled ? 1U : 0U));
   }
   for (FirmwareProfile profile : {FirmwareProfile::FW_9200, FirmwareProfile::FW_E670, FirmwareProfile::FW_E693}) {
     test_now = 0;
@@ -415,6 +485,38 @@ void power_feedback_tests() {
         hub.observe(Command::ALARM, 0);
         hub.observe(Command::REQUESTED_POWER, 0x000200);
         CHECK(number.state == 2);
+  }
+  {
+    test_now = 0;
+    ClockAdvancingHub hub;
+    text_sensor::TextSensor status;
+    hub.set_text_sensor(4, &status);
+    hub.setup();
+    hub.synchronize();
+    hub.observe(Command::PHASE, 0x020100);
+    hub.observe(Command::REQUESTED_POWER, 0x000100);
+    CHECK(hub.request_level(2));
+    test_now = 900;
+    hub.tick();
+    test_now = 1000;
+    hub.buffer_reply("000000");
+    hub.loop();
+    CHECK(status.state.find("acknowledged, unverified") != std::string::npos);
+    hub.observe(Command::REQUESTED_POWER, 0x000200);
+    CHECK(status.state.find("verified by readback") != std::string::npos);
+  }
+  {
+    test_now = 0;
+    ClockAdvancingHub hub;
+    sensor::Sensor target;
+    hub.set_numeric_sensor(8, &target);
+    hub.setup();
+    test_now = 900;
+    hub.read_target();
+    test_now = 1000;
+    hub.buffer_reply("001600");
+    hub.loop();
+    CHECK(target.state == 22);
   }
   test_now = 0;
   std::cout << "PASS: C500-only selection, Off rejection, reported-level startup, ignition writes, match/mismatch/unavailable/expiry, optional polling and legacy overrides\n";

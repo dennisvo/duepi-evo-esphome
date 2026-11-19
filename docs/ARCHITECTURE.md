@@ -253,7 +253,8 @@ remains off.
 
 ## Development
 
-Use Python 3.13 and the [pinned development dependencies](../requirements-dev.txt).
+Use Python 3.13 and the [development dependencies](../requirements-dev.txt).
+ESPHome has a minimum-version requirement; the other dependencies are pinned.
 Configure pip to use your required package index before installing. On Windows:
 
 ```text
@@ -287,7 +288,7 @@ generated source, defines and ELF for installer inclusion/exclusion.
 
 The [CI workflow](../.github/workflows/validate.yml) requires the repository secret
 `PYTHON_PACKAGE_INDEX_URL`, pointing to an authenticated Azure Artifacts PyPI feed
-with the pinned dependencies available. Configure this secret when setting up CI;
+with compatible development dependencies available. Configure this secret when setting up CI;
 the workflow does not fall back to another package index. Pull requests without
 access to the secret cannot run the dependency-backed job. Firmware compilation
 is available as a manual workflow option.

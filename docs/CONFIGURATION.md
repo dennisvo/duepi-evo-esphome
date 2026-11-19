@@ -192,7 +192,7 @@ configured on the hub, not through a separate switch platform.
 | Sensors | Room/target temperatures, Power, Auger Level, phase and alarm text |
 | Controls | Climate, optional power number and reset button |
 | Configuration | Target-temperature limits, standby and installer tools/access |
-| Diagnostics | Internal temperatures/speeds, counters, communication, raw codes, identity and outcome/provenance entities |
+| Diagnostics | Flue/PCB temperatures, fan/exhaust readings, optional diagnostics, counters, communication, raw codes, identity and outcome/provenance entities |
 
 These are schema defaults. Set `entity_category` on declared entities to override
 placement; `entity_category: ""` restores normal placement. Auto-generated
@@ -212,7 +212,7 @@ optional reads are polled only when their entities are configured:
 | `extraction_sensor_level` | `sensor` | Raw extraction-sensor level |
 | `flue_motor_correction` | `sensor` | Raw correction byte |
 | `pellet_correction` | `sensor` | Raw correction byte |
-| `cycle_time` | `text_sensor` | Two decimal fields, e.g. `10:11`; units unverified |
+| `cycle_time` | `text_sensor` | Active countdown as minutes:seconds, e.g. `10:11`; during heating, time until periodic cleaning |
 
 Enable the desired entries in the examples. These are read-only sensors, not
 correction controls. Missing replies use normal timeout/recovery handling;
@@ -230,9 +230,11 @@ Climate OFF alone is not proof of a stopped stove.
 **Transaction Result** reports normal command outcomes. An ACK is not verification;
 a missing ACK does not prove failure. Successful background reads update values
 and freshness without changing this entity. Read timeouts can appear before the
-first normal command; later background timeouts do not overwrite command results.
-Individual transactions remain available in DEBUG logs. Installer/custom
-operations have separate result entities. See
+first numbered normal or advanced request; later background timeouts do not
+overwrite command results.
+Individual transactions remain available in DEBUG logs. Parameter operations use
+Installer Result; custom outcomes use Transaction Result, with reply data in
+Custom Response Data. See
 [communication and outcomes](BEHAVIOR.md#communication-and-outcomes).
 
 `last_response` is an opt-in debugging diagnostic, commented out in both examples.
@@ -332,10 +334,12 @@ are `stove_installer_read(parameter)`, `stove_installer_write(parameter,value)`,
 `stove_send_command(command)` and `stove_send_raw(payload)`. Home Assistant prefixes
 them with the node name.
 
-The hub adds framing/checksum. **Custom commands bypass normal firmware, alarm
-and command-specific checks.** Ordinary-shutdown and pending-Off protections
-still apply; raw `S` writes retain the ignition/known-phase guard. These interfaces
-are not restricted to safe reads. Restrict API access.
+The hub adds framing/checksum. **Custom commands bypass normal firmware-profile,
+alarm and command-specific checks, including known-phase checks except for raw
+`S` writes.** Fresh synchronized core, firmware and board readings are still
+required. Ordinary-shutdown and pending-Off protections apply; raw `S` writes
+retain the ignition/known-phase guard. These interfaces are not restricted to safe
+reads. Restrict API access.
 
 **Custom Response Data** shows Pending, a hexadecimal reply or Unavailable after
 rejection/cancellation/timeout. A reply is not physical verification. See
@@ -369,4 +373,4 @@ logger:
 Use VERBOSE temporarily for frame diagnostics. The global level is a compile-time
 ceiling: `logger.logs.duepi: DEBUG` cannot recover messages omitted by global INFO.
 Raise the global level first, then lower noisy tags in `logger.logs`. Detailed
-startup configuration also needs DEBUG or above in the pinned ESPHome version.
+startup configuration also needs DEBUG or above in the tested ESPHome versions.
