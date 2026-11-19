@@ -25,7 +25,11 @@ class DuepiTCPEmulator {
   bool start(uint16_t port);
   void stop();
   void loop();
+  bool listening() const { return this->listener_ != nullptr; }
  protected:
+  bool open_listener_();
+  bool listener_failed_(const char *operation, int error);
+  void close_listener_();
   void close_client_(const char *reason);
   void flush_();
   void log_bytes_(const char *direction, const uint8_t *data, size_t size);
@@ -35,6 +39,11 @@ class DuepiTCPEmulator {
   std::array<uint8_t, 512> pending_{};
   size_t pending_size_{0};
   uint32_t last_progress_{0};
+  uint32_t last_client_rx_{0};
+  uint32_t last_listener_attempt_{0};
+  uint16_t port_{2000};
+  bool enabled_{false};
+  bool listener_retry_pending_{false};
 };
 
 }  // namespace duepi

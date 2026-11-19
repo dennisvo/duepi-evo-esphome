@@ -504,7 +504,10 @@ void DuepiHub::loop() {
     if (this->available() != 0 || uint32_t(now - this->tcp_emulator_transition_at_) < this->engine_.timeout ||
         uint32_t(now - this->tcp_emulator_last_rx_) < this->engine_.quiet_time) return;
     this->tcp_emulator_transition_ = false;
-    ESP_LOGI(TAG, "UART handover complete: %s", this->tcp_emulator_enabled_ ? "TCP emulator ready" : "normal polling resuming");
+    const char *status = "normal polling resuming";
+    if (this->tcp_emulator_enabled_)
+      status = this->tcp_emulator_.listening() ? "TCP emulator ready" : "TCP emulator waiting for listener";
+    ESP_LOGI(TAG, "UART handover complete: %s", status);
   }
   if (this->tcp_emulator_enabled_) {
     this->tcp_emulator_.loop();

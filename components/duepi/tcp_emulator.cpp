@@ -13,10 +13,7 @@ static const char *const TAG = "duepi.tcp_emulator";
 
 bool DuepiHub::set_tcp_emulator_enabled(bool value) {
   if (value == this->tcp_emulator_enabled_) return value;
-  if (value && !this->tcp_emulator_.start(this->tcp_emulator_port_)) {
-    ESP_LOGW(TAG, "Cannot open TCP listener on port %u; emulator remains off", unsigned(this->tcp_emulator_port_));
-    return false;
-  }
+  if (value) this->tcp_emulator_.start(this->tcp_emulator_port_);
   this->tcp_emulator_enabled_ = value;
   if (!value) this->tcp_emulator_.stop();
   this->engine_.resynchronize(millis());
@@ -45,19 +42,47 @@ void DuepiTCPEmulatorSwitch::write_state(bool value) {
 }
 
 bool DuepiTCPEmulator::start(uint16_t port) {
+  this->stop();
+  this->enabled_ = true;
+  this->port_ = port;
+  return this->open_listener_();
+}
+
+bool DuepiTCPEmulator::open_listener_() {
+  this->last_listener_attempt_ = millis();
+  this->listener_retry_pending_ = true;
   this->listener_ = socket::socket_ip_loop_monitored(SOCK_STREAM, 0);
-  if (this->listener_ == nullptr) return false;
+  if (this->listener_ == nullptr) return this->listener_failed_("create", errno);
+  if (this->listener_->setblocking(false) != 0) return this->listener_failed_("nonblocking setup", errno);
   int reuse = 1;
+  if (this->listener_->setsockopt(SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0)
+    return this->listener_failed_("SO_REUSEADDR", errno);
   sockaddr_storage address{};
-  socklen_t size = socket::set_sockaddr_any(reinterpret_cast<sockaddr *>(&address), sizeof(address), port);
-  if (size == 0 || this->listener_->setblocking(false) != 0 ||
-      this->listener_->setsockopt(SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0 ||
-      this->listener_->bind(reinterpret_cast<sockaddr *>(&address), size) != 0 || this->listener_->listen(1) != 0) {
-    this->stop();
-    return false;
-  }
-  ESP_LOGW(TAG, "Raw TCP listener on port %u: unauthenticated stove access; trusted LAN only", unsigned(port));
+  socklen_t size = socket::set_sockaddr_any(reinterpret_cast<sockaddr *>(&address), sizeof(address), this->port_);
+  if (size == 0) return this->listener_failed_("address setup", EINVAL);
+  if (this->listener_->bind(reinterpret_cast<sockaddr *>(&address), size) != 0)
+    return this->listener_failed_("bind", errno);
+  if (this->listener_->listen(1) != 0) return this->listener_failed_("listen", errno);
+  this->listener_retry_pending_ = false;
+  ESP_LOGW(TAG, "Raw TCP listener on port %u: unauthenticated stove access; trusted LAN only", unsigned(this->port_));
   return true;
+}
+
+bool DuepiTCPEmulator::listener_failed_(const char *operation, int error) {
+  ESP_LOGW(TAG, "TCP listener %s failed on port %u: errno=%d; retry in 5s, UART remains exclusive",
+           operation, unsigned(this->port_), error);
+  this->last_listener_attempt_ = millis();
+  this->listener_retry_pending_ = true;
+  this->close_client_("listener failed; reconnect required");
+  this->close_listener_();
+  return false;
+}
+
+void DuepiTCPEmulator::close_listener_() {
+  if (this->listener_ != nullptr) {
+    this->listener_->close();
+    this->listener_.reset();
+  }
 }
 
 void DuepiTCPEmulator::close_client_(const char *reason) {
@@ -70,11 +95,10 @@ void DuepiTCPEmulator::close_client_(const char *reason) {
 }
 
 void DuepiTCPEmulator::stop() {
+  this->enabled_ = false;
+  this->listener_retry_pending_ = false;
   this->close_client_("emulator disabled");
-  if (this->listener_ != nullptr) {
-    this->listener_->close();
-    this->listener_.reset();
-  }
+  this->close_listener_();
 }
 
 void DuepiTCPEmulator::log_bytes_(const char *direction, const uint8_t *data, size_t size) {
@@ -97,25 +121,33 @@ void DuepiTCPEmulator::flush_() {
     std::memmove(this->pending_.data(), this->pending_.data() + written, this->pending_size_);
     this->last_progress_ = millis();
   } else if (written == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+    if (written < 0) ESP_LOGW(TAG, "TCP write failed: errno=%d", errno);
     this->close_client_("TCP write failed");
   }
 }
 
 void DuepiTCPEmulator::loop() {
-  if (this->listener_ == nullptr) return;
+  if (!this->enabled_) return;
+  if (this->listener_ == nullptr &&
+      (!this->listener_retry_pending_ || uint32_t(millis() - this->last_listener_attempt_) >= 5000))
+    this->open_listener_();
   uint8_t data[128];
   if (this->client_ != nullptr) {
     size_t capacity = std::min(sizeof(data), this->uart_->parent_->available_for_write());
     if (capacity != 0) {
       auto received = this->client_->read(data, capacity);
       if (received > 0) {
+        this->last_client_rx_ = millis();
         this->uart_->write_array(data, static_cast<size_t>(received));
         this->log_bytes_("TCP->UART", data, static_cast<size_t>(received));
       } else if (received == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+        if (received < 0) ESP_LOGW(TAG, "TCP read failed: errno=%d", errno);
         this->close_client_("TCP closed or read failed");
       }
     }
     this->flush_();
+    if (this->client_ != nullptr && uint32_t(millis() - this->last_client_rx_) >= 30000)
+      this->close_client_("idle timeout: no app input for 30 seconds");
   }
   if (this->client_ == nullptr) {
     uint8_t discarded = 0;
@@ -123,15 +155,24 @@ void DuepiTCPEmulator::loop() {
       if (!this->uart_->read_byte(&discarded)) break;
     if (this->uart_->available() != 0) return;
   }
+  if (this->listener_ == nullptr) return;
   auto incoming = this->listener_->accept_loop_monitored(nullptr, nullptr);
+  if (incoming == nullptr && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR && errno != ECONNABORTED) {
+    this->listener_failed_("accept", errno);
+    return;
+  }
   if (incoming != nullptr) {
     int nodelay = 1;
-    if (this->client_ != nullptr || incoming->setblocking(false) != 0 ||
+    if (this->client_ != nullptr) {
+      ESP_LOGW(TAG, "Rejected additional TCP client: existing session owns UART; toggle emulator off/on to clear it");
+      incoming->close();
+    } else if (incoming->setblocking(false) != 0 ||
         incoming->setsockopt(IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay)) != 0) {
+      ESP_LOGW(TAG, "Rejected TCP client: socket setup failed, errno=%d", errno);
       incoming->close();
     } else {
       this->client_ = std::move(incoming);
-      this->last_progress_ = millis();
+      this->last_progress_ = this->last_client_rx_ = millis();
       ESP_LOGI(TAG, "Client connected; raw UART ownership remains exclusive");
     }
   }

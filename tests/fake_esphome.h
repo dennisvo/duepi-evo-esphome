@@ -38,20 +38,38 @@ struct TestSocketState {
   bool bind_failed{false};
   bool read_failed{false};
   bool write_failed{false};
+  std::string fail_operation;
+  int accept_error{0};
   size_t write_limit{512};
 };
 inline std::shared_ptr<TestSocketState> test_listener;
 inline bool test_bind_failed = false;
+inline std::string test_listener_failure;
+inline size_t test_listener_attempts = 0;
 class Socket {
  public:
   explicit Socket(std::shared_ptr<TestSocketState> state) : state_(std::move(state)) {}
   ~Socket() { this->close(); }
   int close() { this->state_->closed = true; return 0; }
-  int setblocking(bool) { return 0; }
-  int setsockopt(int, int, const void *, socklen_t) { return 0; }
-  int bind(const sockaddr *, socklen_t) { return this->state_->bind_failed ? -1 : 0; }
-  int listen(int) { return 0; }
+  int setblocking(bool) {
+    if (this->state_->fail_operation == "blocking") { errno = EIO; return -1; }
+    return 0;
+  }
+  int setsockopt(int, int option, const void *, socklen_t) {
+    if ((option == SO_REUSEADDR && this->state_->fail_operation == "reuse") ||
+        (option == TCP_NODELAY && this->state_->fail_operation == "nodelay")) { errno = EIO; return -1; }
+    return 0;
+  }
+  int bind(const sockaddr *, socklen_t) {
+    if (this->state_->bind_failed || this->state_->fail_operation == "bind") { errno = EADDRINUSE; return -1; }
+    return 0;
+  }
+  int listen(int) {
+    if (this->state_->fail_operation == "listen") { errno = EIO; return -1; }
+    return 0;
+  }
   std::unique_ptr<Socket> accept_loop_monitored(sockaddr *, socklen_t *) {
+    if (this->state_->accept_error != 0) { errno = this->state_->accept_error; return nullptr; }
     if (this->state_->incoming.empty()) { errno = EAGAIN; return nullptr; }
     auto incoming = this->state_->incoming.front();
     this->state_->incoming.pop_front();
@@ -84,11 +102,16 @@ class Socket {
 };
 using ListenSocket = Socket;
 inline std::unique_ptr<ListenSocket> socket_ip_loop_monitored(int, int) {
+  ++test_listener_attempts;
+  if (test_listener_failure == "create") { errno = ENOMEM; return nullptr; }
   test_listener = std::make_shared<TestSocketState>();
   test_listener->bind_failed = test_bind_failed;
+  test_listener->fail_operation = test_listener_failure;
   return std::make_unique<ListenSocket>(test_listener);
 }
-inline socklen_t set_sockaddr_any(sockaddr *, socklen_t size, uint16_t) { return size; }
+inline socklen_t set_sockaddr_any(sockaddr *, socklen_t size, uint16_t) {
+  return test_listener_failure == "address" ? 0 : size;
+}
 }  // namespace socket
 #endif
 struct TestLog {

@@ -1947,6 +1947,36 @@ class TestEmulatorSwitch : public DuepiTCPEmulatorSwitch {
   using DuepiTCPEmulatorSwitch::write_state;
 };
 
+void tcp_emulator_idle_tests() {
+  test_now = UINT32_MAX - 15000;
+  TestHub uart;
+  DuepiTCPEmulator bridge(&uart);
+  CHECK(bridge.start(2000));
+  auto abandoned = std::make_shared<socket::TestSocketState>();
+  socket::test_listener->incoming.push_back(abandoned);
+  bridge.loop();
+  test_now += 29999;
+  uart.input = {0x1B, 0, '&'};
+  bridge.loop();
+  CHECK(!abandoned->closed);
+  auto replacement = std::make_shared<socket::TestSocketState>();
+  socket::test_listener->incoming.push_back(replacement);
+  ++test_now;
+  bridge.loop();
+  CHECK(abandoned->closed && !replacement->closed);
+  CHECK(replacement->output.empty());
+  for (size_t iteration = 0; iteration < 3; ++iteration) {
+    test_now += 20000;
+    replacement->input = {0x1B, 'R', '&'};
+    bridge.loop();
+    CHECK(!replacement->closed);
+  }
+  bridge.stop();
+  CHECK(replacement->closed);
+  test_now = 0;
+  std::cout << "PASS: abandoned TCP session expires across clock wrap; UART traffic cannot retain it; active app survives\n";
+}
+
 void tcp_emulator_tests() {
   test_now = 100;
   TestHub hub;
@@ -2029,6 +2059,11 @@ void tcp_emulator_tests() {
   listener->incoming.push_back(second);
   hub.loop();
   CHECK(second->closed && !client->closed);
+  bool rejected_logged = false;
+  for (const auto &entry : test_logs)
+    rejected_logged |= entry.tag == "duepi.tcp_emulator" &&
+                       entry.message.find("Rejected additional TCP client") != std::string::npos;
+  CHECK(rejected_logged);
   client->write_limit = 0;
   hub.input = {1, 2, 3};
   hub.loop();
@@ -2061,8 +2096,19 @@ void tcp_emulator_tests() {
   CHECK(!hub.request_target(22));
   socket::test_bind_failed = true;
   mode.write_state(true);
-  CHECK(!mode.state && socket::test_listener->closed);
+  CHECK(mode.state && socket::test_listener->closed);
+  auto failed_listener = socket::test_listener;
+  size_t before_retry = hub.writes.size();
+  CHECK(!hub.request_off() && !hub.request_target(22));
   socket::test_bind_failed = false;
+  test_now += 4999;
+  hub.loop();
+  CHECK(socket::test_listener == failed_listener);
+  ++test_now;
+  hub.loop();
+  CHECK(mode.state && socket::test_listener != failed_listener && !socket::test_listener->closed);
+  CHECK(hub.writes.size() == before_retry);
+  mode.write_state(false);
 
   for (int failure = 0; failure < 4; ++failure) {
     test_now = 0;
@@ -2095,11 +2141,91 @@ void tcp_emulator_tests() {
   test_now = 0;
   std::cout << "PASS: TCP emulator boot-off, ownership, handover, guards, binary forwarding, partial writes, isolation and failures\n";
 }
+
+void tcp_emulator_listener_tests() {
+  for (const char *operation : {"create", "blocking", "reuse", "address", "bind", "listen"}) {
+    test_now = UINT32_MAX - 1000;
+    TestHub uart;
+    DuepiTCPEmulator bridge(&uart);
+    socket::test_listener_failure = operation;
+    size_t attempts = socket::test_listener_attempts;
+    CHECK(!bridge.start(3000));
+    CHECK(socket::test_listener_attempts == attempts + 1);
+    socket::test_listener_failure.clear();
+    uart.input = {0, 0x1B, '&'};
+    test_now += 4999;
+    bridge.loop();
+    CHECK(socket::test_listener_attempts == attempts + 1 && uart.input.empty());
+    ++test_now;
+    bridge.loop();
+    CHECK(socket::test_listener_attempts == attempts + 2 && !socket::test_listener->closed);
+    bridge.stop();
+    test_now += 10000;
+    bridge.loop();
+    CHECK(socket::test_listener_attempts == attempts + 2);
+  }
+  test_now = 0;
+  TestHub uart;
+  DuepiTCPEmulator bridge(&uart);
+  socket::test_listener_failure = "bind";
+  CHECK(!bridge.start(2000));
+  CHECK(!bridge.listening());
+  size_t cancelled_attempts = socket::test_listener_attempts;
+  bridge.stop();
+  socket::test_listener_failure.clear();
+  test_now += 5000;
+  bridge.loop();
+  CHECK(socket::test_listener_attempts == cancelled_attempts);
+  CHECK(bridge.start(2000));
+  CHECK(bridge.listening());
+  auto listener = socket::test_listener;
+  auto client = std::make_shared<socket::TestSocketState>();
+  listener->incoming.push_back(client);
+  bridge.loop();
+  for (int transient : {EAGAIN, EINTR, ECONNABORTED}) {
+    listener->accept_error = transient;
+    bridge.loop();
+    CHECK(!listener->closed && !client->closed);
+  }
+  client->write_limit = 0;
+  uart.input = {0xAA, 0x55};
+  bridge.loop();
+  listener->accept_error = EBADF;
+  bridge.loop();
+  CHECK(listener->closed && client->closed && !bridge.listening());
+  test_now += 5000;
+  bridge.loop();
+  CHECK(socket::test_listener != listener && !socket::test_listener->closed);
+  for (const char *operation : {"blocking", "nodelay"}) {
+    auto invalid = std::make_shared<socket::TestSocketState>();
+    invalid->fail_operation = operation;
+    socket::test_listener->incoming.push_back(invalid);
+    bridge.loop();
+    CHECK(invalid->closed && !socket::test_listener->closed);
+  }
+  auto reconnect = std::make_shared<socket::TestSocketState>();
+  socket::test_listener->incoming.push_back(reconnect);
+  bridge.loop();
+  CHECK(reconnect->output.empty());
+  reconnect->input = {0, 0x1B, '&'};
+  bridge.loop();
+  CHECK(uart.writes.size() == 1 && uart.writes[0] == std::vector<uint8_t>({0, 0x1B, '&'}));
+  bridge.stop();
+  bool error_logged = false;
+  for (const auto &entry : test_logs)
+    error_logged |= entry.tag == "duepi.tcp_emulator" &&
+                    entry.message.find("failed on port 3000: errno=") != std::string::npos;
+  CHECK(error_logged);
+  test_now = 0;
+  std::cout << "PASS: TCP listener stage failures, bounded retries, clock wrap, stop, accept recovery and client setup failures\n";
+}
 #endif
 
 int main() {
 #ifdef USE_DUEPI_TCP_EMULATOR
+  tcp_emulator_idle_tests();
   tcp_emulator_tests();
+  tcp_emulator_listener_tests();
 #endif
 #ifdef USE_DUEPI_INSTALLER
   installer_parameter_range_tests();

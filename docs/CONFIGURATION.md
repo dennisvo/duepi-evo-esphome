@@ -144,6 +144,24 @@ seconds of blocked TCP output disconnect the client and discard buffered output.
 Disconnected-session buffers are never sent to another client. TCP read boundaries
 and logged chunks are not protocol frame boundaries.
 
+A session expires after **30 seconds without app input**, releasing the single
+client slot even if an app was suspended without closing TCP. Stove output alone
+does not keep a session alive. An actively polling app refreshes this timeout;
+there are no injected keepalive commands or automatic stove-command retries.
+Additional clients are still rejected, now with an explicit warning. For immediate
+recovery, force-close the app, toggle the emulator off/on, wait for readiness and
+reopen the app with the same ESP IP and TCP port.
+
+Listener setup failures and fatal accept errors are logged with the operation,
+port and `errno`, then retried every **five seconds**. The switch remains on and
+UART control stays exclusively with the emulator while it retries; normal polling
+does not resume in the background. `TCP emulator waiting for listener` means the
+UART handover finished but TCP setup has not succeeded. Wait for the subsequent
+`Raw TCP listener on port ...` message before reconnecting. Turning the switch off
+cancels retries. After an ESP reboot the switch is off and must be turned on again.
+Read/write errors and rejected connections are also logged, so a failed app
+connection can be distinguished from connected TCP with no app commands.
+
 **Security:** this is an unauthenticated, unencrypted raw TCP endpoint that bypasses
 the component's stove-command protections, including installer opt-ins and limits.
 Use only on a trusted LAN. Do not expose or forward this port to the Internet.

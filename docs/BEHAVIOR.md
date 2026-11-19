@@ -22,6 +22,10 @@ all component polling and stove commands stop, including installer/custom and
 standby operations. Normal controls remain visible but are rejected. Cached
 telemetry is invalidated and Installer Access is disabled. A disconnected app
 does not return control to the component; the switch must be turned off.
+An app session with no input for 30 seconds is closed so another connection can
+take its place. Listener failures retry every five seconds, still without returning
+UART ownership to the normal controls. These are connection-lifecycle timeouts,
+not extra delays or retries for stove commands.
 
 Turning it off closes sockets, discards buffered data and starts fresh
 synchronization after a UART drain/quiet interval. No pending component command

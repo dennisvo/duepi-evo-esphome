@@ -68,6 +68,11 @@ the drain before normal polling resumes. The bridge has a 512-byte TCP-output
 buffer and processes at most 128 bytes per direction per loop. Partial socket
 writes retain only unsent bytes; disconnects discard them. It is compiled only
 with `USE_DUEPI_TCP_EMULATOR`, enabled by the `duepi.tcp_emulator` YAML block.
+The single-client slot expires after 30 seconds without TCP input, not UART output.
+Listener setup and fatal accept failures retry every five seconds using wrap-safe
+elapsed checks, without releasing UART ownership. Switching off cancels retries.
+Failures include operation/port/errno logs; additional clients are explicitly
+rejected rather than silently closed. Listener recovery never replays buffered data.
 
 ## Queue and Recovery
 
