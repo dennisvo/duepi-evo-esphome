@@ -8,7 +8,7 @@ void TransactionEngine::remove_(size_t index) {
   --this->size_;
 }
 
-bool TransactionEngine::enqueue(const Request &request, uint32_t now, bool prioritize_read) {
+bool TransactionEngine::enqueue(const Request &request, uint32_t now) {
   WireFrame frame{};
   if (!build_request(request, frame) || (is_write(request.command) && this->recovering_)) {
     this->io_.result(request, Outcome::REJECTED, nullptr);
@@ -26,11 +26,7 @@ bool TransactionEngine::enqueue(const Request &request, uint32_t now, bool prior
   for (size_t index = 0; index < this->size_; ++index) {
     if (this->queue_[index].request.command != request.command) continue;
     if (request.command == Command::INSTALLER_READ && this->queue_[index].request.parameter != request.parameter) continue;
-    if (!is_write(request.command)) {
-      if (!prioritize_read) return true;
-      this->remove_(index);
-      break;
-    }
+    if (!is_write(request.command)) return true;
     if (request.command == Command::SET_TARGET || request.command == Command::SET_LEVEL) {
       Request cancelled = this->queue_[index].request;
       this->remove_(index);
@@ -43,7 +39,7 @@ bool TransactionEngine::enqueue(const Request &request, uint32_t now, bool prior
     return false;
   }
   size_t position = this->size_;
-  if (is_write(request.command) || prioritize_read) {
+  if (is_write(request.command)) {
     position = 0;
     while (position < this->size_ && is_write(this->queue_[position].request.command)) ++position;
     for (size_t index = this->size_; index > position; --index) this->queue_[index] = this->queue_[index - 1];

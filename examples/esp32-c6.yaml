@@ -61,6 +61,11 @@ duepi:
   init_command: false
   update_interval: 10s
   stale_after: 45s
+  # Optional raw vendor-app bridge, controlled by an HA switch (off after reboot).
+  # Unauthenticated stove access: trusted LAN only. Pauses ALL component UART traffic.
+  # tcp_emulator:
+  #   name: TCP Emulator
+  #   port: 2000
   # Optional: let the stove stop/restart automatically around its temperature
   # target, according to its own standby settings; not an immediate on/off command.
   # Uncomment to add a Home Assistant switch named Standby Mode, allowing you

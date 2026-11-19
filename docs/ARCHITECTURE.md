@@ -20,7 +20,8 @@ water-temperature targets are outside scope. See the
 | `protocol.h/.cpp` | Ten-byte codec, checked domains, fixed parser, semantic request construction |
 | `transaction.h/.cpp` | Eight-slot queue, one pending request, ordering/coalescing, timeouts and quiet recovery |
 | `state.h`, `control.h` | Observed fields/freshness, write authorization and startup profiles |
-| `duepi.h/.cpp` | Sole UART writer, monotonic poll scheduling, entity publication and control submission |
+| `duepi.h/.cpp` | UART ownership, monotonic poll scheduling, entity publication and control submission |
+| `tcp_emulator.h/.cpp` | Optional exclusive raw TCP forwarding and runtime HA switch; no protocol interpretation |
 | `duepi_climate.h/.cpp` | HEAT/OFF, target temperature and power presets; no local thermostat |
 | `privilege.h`, `privileged.h/.cpp` | Runtime-off one-shot capabilities, installer readback, custom diagnostic isolation |
 | `installer.py` | Conditional installer entities and native API action registration from one build option |
@@ -57,6 +58,16 @@ identity; the wire protocol has no usable transaction identifier.
 Command outcomes also include timeout/recovery results without a matched reply.
 Advanced result handling can schedule installer readback or resynchronize polling,
 as described below; it does not interpret custom replies as telemetry.
+
+The optional TCP emulator bypasses this transaction flow only while its runtime
+switch is on. The hub cancels pending transactions, invalidates observations and
+blocks submission/send-time/installer gates before handing over the UART after
+a timeout-plus-quiet drain. Its loop then runs only raw forwarding, never the
+parser, scheduler or transaction engine. Switching off closes sockets and repeats
+the drain before normal polling resumes. The bridge has a 512-byte TCP-output
+buffer and processes at most 128 bytes per direction per loop. Partial socket
+writes retain only unsent bytes; disconnects discard them. It is compiled only
+with `USE_DUEPI_TCP_EMULATOR`, enabled by the `duepi.tcp_emulator` YAML block.
 
 ## Queue and Recovery
 

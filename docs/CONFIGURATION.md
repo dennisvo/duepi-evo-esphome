@@ -14,6 +14,7 @@ electrical precautions, use the [hardware reference](HARDWARE.md).
 - [Entities](#entities)
 - [Standby Mode](#standby-mode)
 - [Installer Mode](#installer-mode)
+- [TCP Emulator](#tcp-emulator)
 - [Automation and Custom Commands](#automation-and-custom-commands)
 - [Logging](#logging)
 
@@ -57,6 +58,7 @@ Normal climate and power controls are available without an opt-in.
 | `installer_parameter_min` | `0` | Lowest permitted serial parameter address, within 0..255 |
 | `installer_parameter_max` | `255` | Highest permitted serial parameter address, within 0..255 |
 | `standby_mode` | Not configured | Optional exact-address standby switch; see [Standby Mode](#standby-mode) |
+| `tcp_emulator` | Not configured | Optional raw UART bridge controlled by a Home Assistant configuration switch |
 
 ### Temperature Limits
 
@@ -101,6 +103,57 @@ It is a YAML-only setting and requires rebuilding. It adds a firmware query befo
 other requests, increasing traffic. An initialization timeout cancels the unsent
 request rather than replaying it. It does not reset alarms, reboot the stove or
 start ignition. See [queue and recovery](ARCHITECTURE.md#queue-and-recovery).
+
+## TCP Emulator
+
+For vendor-app diagnostics, add this block to the existing hub configuration:
+
+```yaml
+duepi:
+  tcp_emulator:
+    name: TCP Emulator
+    port: 2000
+```
+
+Omitting the block excludes the bridge. `name` and `port` are optional; the defaults
+are shown above. Ports must be 1..65535. The configuration switch always starts
+off after reboot; inversion and restoring an on-state are not supported.
+Keep `logger.baud_rate: 0` (required when this feature is configured).
+
+Turn **TCP Emulator** on in Home Assistant, wait for the network log message
+`UART handover complete: TCP emulator ready`, then point the vendor app's local
+connection at the ESP's LAN IP and configured TCP port. This does not emulate
+cloud services, device discovery or authentication, and app/controller compatibility
+still needs hardware testing. No original Wi-Fi module is needed for raw forwarding.
+
+The switch gives the app exclusive UART ownership, including when no app is
+connected. Normal polling, initialization queries, standby polling and all
+component stove commands are blocked. Observed telemetry becomes unavailable;
+the last target may remain displayed as an explicitly unverified retained value.
+Wi-Fi, the native API and OTA remain available. Turn the switch off to close
+the sockets and resume fresh synchronization; pending commands are discarded,
+not replayed. Installer Access is also turned off and must be explicitly re-enabled.
+
+Each switch transition drains UART input for at least `response_timeout` and
+waits for `quiet_time` without incoming bytes. An in-flight command may already
+have reached the stove and cannot be undone. This quarantine is only for changing
+UART owners: app traffic gets no added protocol delays, initialization, retries,
+checksum processing or rewriting. One client is accepted; additional clients are
+closed. Per-loop work and buffers are bounded; overflow, I/O errors or three
+seconds of blocked TCP output disconnect the client and discard buffered output.
+Disconnected-session buffers are never sent to another client. TCP read boundaries
+and logged chunks are not protocol frame boundaries.
+
+**Security:** this is an unauthenticated, unencrypted raw TCP endpoint that bypasses
+the component's stove-command protections, including installer opt-ins and limits.
+Use only on a trusted LAN. Do not expose or forward this port to the Internet.
+The encrypted native API does not protect the raw bridge.
+
+For timestamped directional hex capture, set global `logger.level: VERBOSE` and
+retain `logger.baud_rate: 0`. Capture network logs for `duepi.tcp_emulator` while
+making one controlled app change. A per-tag VERBOSE setting cannot override a
+lower global compile-time log level. Normal INFO logs contain connection and
+handover events, not raw byte dumps.
 
 ## Timing Options
 

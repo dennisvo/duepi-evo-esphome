@@ -81,6 +81,7 @@ bool DuepiHub::set_installer_access(bool value) {
 }
 
 bool DuepiHub::set_installer_enabled(bool value) {
+  if (value && this->tcp_emulator_owns_uart_()) return false;
   bool was_verifying = this->installer_verifying_;
   bool enabled = this->installer_permission_.set_enabled(value);
   ESP_LOGI(TAG, "Installer access %s; one-shot write permission cleared", enabled ? "enabled" : "disabled");
@@ -91,6 +92,7 @@ bool DuepiHub::set_installer_enabled(bool value) {
 }
 
 bool DuepiHub::set_custom_enabled(bool value) {
+  if (value && this->tcp_emulator_owns_uart_()) return false;
   bool enabled = this->custom_permission_.set_enabled(value);
   ESP_LOGI(TAG, "Custom command access %s; one-shot permission cleared", enabled ? "enabled" : "disabled");
   if (!enabled) this->engine_.cancel_installer();
@@ -98,6 +100,7 @@ bool DuepiHub::set_custom_enabled(bool value) {
 }
 
 bool DuepiHub::privileged_ready_() const {
+  if (this->tcp_emulator_owns_uart_()) return false;
   uint32_t now = millis();
   return this->sync_mask_ == 31 && this->state_.healthy(now, this->stale_after_) &&
          this->state_.fresh(Command::FIRMWARE, now, this->stale_after_) &&

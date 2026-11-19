@@ -13,6 +13,8 @@ VARIANTS = {
     "standby": ("false", "false"),
     "installer-standby": ("true", "true"),
     "c6-standard": ("false", "false"),
+    "emulator": ("false", "false"),
+    "c6-emulator": ("false", "false"),
 }
 
 
@@ -33,7 +35,7 @@ def main():
             raise SystemExit(f"Unknown variant: {name}; choose {', '.join(VARIANTS)}")
         config_path = destination / f"duepi-{name}.yaml"
         controls_enabled, installer = VARIANTS[name]
-        example_name = "esp32-c6.yaml" if name == "c6-standard" else "esp32-c3.yaml"
+        example_name = "esp32-c6.yaml" if name.startswith("c6-") else "esp32-c3.yaml"
         example = (ROOT / "examples" / example_name).read_text(encoding="utf-8")
         assert "substitutions:" not in example and "${" not in example
         config = yaml.compose(example)
@@ -41,6 +43,11 @@ def main():
         field(field(config, "external_components").value[0], "source").value = "../components"
         field(field(config, "duepi"), "enable_installer").value = installer
         standby_enabled = name in ("standby", "installer-standby")
+        emulator_enabled = name in ("emulator", "c6-emulator")
+        if emulator_enabled:
+            field(field(config, "logger"), "level").value = "VERBOSE"
+            emulator = yaml.compose("tcp_emulator: {name: TCP Emulator, port: 2000}")
+            field(config, "duepi").value.extend(emulator.value)
         if standby_enabled:
             standby = yaml.compose("standby_mode: {parameter: 28, name: Standby Mode}")
             field(config, "duepi").value.extend(standby.value)
@@ -74,6 +81,11 @@ def main():
             assert "Arm One Custom Command" not in source
             assert b"Arm One Custom Command" not in firmware
             included = installer == "true"
+            assert ("#define USE_DUEPI_TCP_EMULATOR" in defines) == emulator_enabled
+            assert ("set_tcp_emulator(" in source) == emulator_enabled
+            assert (b"Raw TCP listener" in firmware) == emulator_enabled
+            assert (b"TCP->UART" in firmware) == emulator_enabled
+            assert (b"UART->TCP" in firmware) == emulator_enabled
             assert ("#define USE_DUEPI_INSTALLER" in defines) == (included or standby_enabled)
             assert ("set_standby_mode" in source) == standby_enabled
             assert (b"Standby Mode" in firmware) == standby_enabled

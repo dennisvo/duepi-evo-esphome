@@ -40,7 +40,9 @@ ESP-IDF framework and suitable UART pins. The example has been validated and
 compiled for the **Seeed XIAO ESP32-C3/C6**, with ESPHome **2026.11.0** and ESP-IDF 
 **5.5.6**; other ESP32 boards have not yet been build-tested. Controller
 compatibility, wiring and electrical levels must be checked for each installation.
-ESP8266 and vendor-app/TCP connections are not supported.
+ESP8266 and connecting this component to a vendor Wi-Fi module over TCP are not
+supported. An optional [TCP Emulator](docs/CONFIGURATION.md#tcp-emulator) exposes
+the ESP's stove UART to a local vendor app for diagnostics.
 Each ESP device connects to one stove; configure one `duepi:` hub per device.
 
 See [stove and integration behavior](docs/BEHAVIOR.md) for operating rules and
@@ -85,6 +87,8 @@ Hydro-specific features are not implemented.
 
 ## Features
 
+- **TCP Emulator:** optional HA switch for exclusive raw vendor-app/UART access,
+	off after reboot. Trusted LAN only; normal stove controls pause while enabled.
 - **Monitoring:** temperatures, operating phase, alarms, selected power, auger/fan
 	readings and communication health, plus optional diagnostics.
 - **Normal controls:** climate HEAT/OFF, target temperature and power presets.

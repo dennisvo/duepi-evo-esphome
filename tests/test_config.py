@@ -95,6 +95,35 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config["power_level"]["entity_category"], "diagnostic")
         self.assertEqual(duepi_text_sensor.FIELDS[9], "cycle_time")
 
+    def test_tcp_emulator_configuration(self):
+        self.assertNotIn("tcp_emulator", self.config())
+        config = self.config(tcp_emulator={})["tcp_emulator"]
+        self.assertEqual(config["port"], 2000)
+        self.assertEqual(config["name"], "TCP Emulator")
+        self.assertEqual(config["restore_mode"], "DISABLED")
+        self.assertEqual(config["entity_category"], "config")
+        self.assertIn("socket", duepi.AUTO_LOAD({"tcp_emulator": config}))
+        self.assertNotIn("socket", duepi.AUTO_LOAD(self.config()))
+        for options in ({"restore_mode": "ALWAYS_ON"}, {"inverted": True}):
+            CORE.reset()
+            with self.assertRaises(cv.Invalid):
+                self.config(tcp_emulator=options)
+        for port in (-1, 0, 65536):
+            CORE.reset()
+            with self.assertRaises(cv.Invalid):
+                self.config(tcp_emulator={"port": port})
+
+    def test_tcp_emulator_requires_network_logging(self):
+        from unittest.mock import patch
+
+        with patch.object(duepi.fv, "full_config") as config:
+            config.get.return_value = {"logger": {"baud_rate": 115200}}
+            with self.assertRaises(cv.Invalid):
+                duepi.validate_tcp_emulator_logger({"tcp_emulator": {}})
+            duepi.validate_tcp_emulator_logger({})
+            config.get.return_value = {"logger": {"baud_rate": 0}}
+            duepi.validate_tcp_emulator_logger({"tcp_emulator": {}})
+
     def test_optional_diagnostics(self):
         sensors = importlib.import_module("duepi.sensor")
         fields = {

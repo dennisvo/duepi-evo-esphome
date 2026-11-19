@@ -17,6 +17,7 @@ def main():
             "components/text_sensor/text_sensor.h", "components/binary_sensor/binary_sensor.h",
             "components/climate/climate.h", "components/number/number.h", "components/button/button.h",
             "components/switch/switch.h",
+            "components/socket/socket.h",
         )
         for header in fake_headers:
             destination = build / "esphome" / header
@@ -27,9 +28,13 @@ def main():
             "hub": ["protocol.cpp", "transaction.cpp", "duepi.cpp", "duepi_climate.cpp", "privileged.cpp"],
             "hub_without_installer": ["protocol.cpp", "transaction.cpp", "duepi.cpp", "duepi_climate.cpp", "privileged.cpp"],
         }
+        suites["hub_emulator"] = suites["hub"] + ["tcp_emulator.cpp"]
+        suites["hub_emulator_without_installer"] = suites["hub_without_installer"] + ["tcp_emulator.cpp"]
         for name, sources in suites.items():
-            defines = [] if name == "hub_without_installer" else ["-DUSE_DUEPI_INSTALLER"]
-            test_name = "hub" if name == "hub_without_installer" else name
+            defines = [] if "without_installer" in name else ["-DUSE_DUEPI_INSTALLER"]
+            if "emulator" in name:
+                defines.append("-DUSE_DUEPI_TCP_EMULATOR")
+            test_name = "core" if name == "core" else "hub"
             executable = build / (f"test_{name}.exe" if os.name == "nt" else f"test_{name}")
             subprocess.run(
                 [sys.executable, "-m", "ziglang", "c++", "-std=c++17", "-Wall", "-Wextra", "-Werror",

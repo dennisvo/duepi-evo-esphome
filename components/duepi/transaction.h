@@ -21,7 +21,7 @@ class TransactionIO {
 class TransactionEngine {
  public:
   explicit TransactionEngine(TransactionIO &io) : io_(io) {}
-  bool enqueue(const Request &request, uint32_t now, bool prioritize_read = false);
+  bool enqueue(const Request &request, uint32_t now);
   void tick(uint32_t now);
   void receive(uint8_t byte, uint32_t now);
   void cancel_queued();

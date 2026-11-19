@@ -14,6 +14,21 @@ parameter meanings and undocumented state transitions remain unverified.
 See the [protocol reference](PROTOCOL.md) for wire formats and register tables,
 and [architecture](ARCHITECTURE.md) for queue and implementation mechanics.
 
+## TCP Emulator Ownership
+
+The optional [TCP Emulator switch](CONFIGURATION.md#tcp-emulator) transfers UART
+ownership to a raw vendor-app connection. It starts off after reboot. While on,
+all component polling and stove commands stop, including installer/custom and
+standby operations. Normal controls remain visible but are rejected. Cached
+telemetry is invalidated and Installer Access is disabled. A disconnected app
+does not return control to the component; the switch must be turned off.
+
+Turning it off closes sockets, discards buffered data and starts fresh
+synchronization after a UART drain/quiet interval. No pending component command
+is replayed. Switching modes cannot undo a command already sent to the stove.
+The bridge forwards raw bytes without enforcing normal stove-command protections;
+it is a trusted-LAN diagnostic tool, not a second concurrent controller.
+
 ## Power and Actuators
 
 ### Stove Behavior
@@ -64,14 +79,8 @@ republishes the reported selection and explains rejection in Transaction Result.
 
 A request or acknowledgement never changes the displayed power. The last report
 remains displayed only while fresh and synchronized core readings are healthy.
-A power-write acknowledgement queues a priority `C500` read ahead of background
-telemetry when `read_power_level` is enabled. Pending writes retain precedence;
-configured transaction spacing and optional initialization still apply. Normal
-polling resumes afterward. This sequencing is experimental, not a confirmed fix
-for remote power changes failing to apply on the tested stove.
 A fresh matching `C500` reply can verify a write; a mismatch displays the reported
-level and records both values in Transaction Result while verification remains
-pending until a match or the existing 15-second deadline. Auger and fan readings never
+level and records both values in Transaction Result. Auger and fan readings never
 verify selected power. Values outside 1..5 make the Power sensor and controls
 unknown without causing UART recovery. Disabling `read_power_level` prevents
 this polling and power-write verification, not power commands; controls remain

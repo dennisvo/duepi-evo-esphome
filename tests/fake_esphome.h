@@ -10,6 +10,15 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <memory>
+#include <cerrno>
+
+#ifdef USE_DUEPI_TCP_EMULATOR
+struct sockaddr {};
+struct sockaddr_storage {};
+using socklen_t = unsigned;
+constexpr int SOCK_STREAM = 1, SOL_SOCKET = 2, SO_REUSEADDR = 3, IPPROTO_TCP = 4, TCP_NODELAY = 5;
+#endif
 
 #define ESP_LOGCONFIG(...) ::esphome::test_log("CONFIG", __VA_ARGS__)
 #define ESP_LOGW(...) ::esphome::test_log("WARN", __VA_ARGS__)
@@ -18,6 +27,70 @@
 #define ESP_LOGV(...) ::esphome::test_log("VERBOSE", __VA_ARGS__)
 
 namespace esphome {
+#ifdef USE_DUEPI_TCP_EMULATOR
+namespace socket {
+struct TestSocketState {
+  std::deque<uint8_t> input;
+  std::vector<uint8_t> output;
+  std::deque<std::shared_ptr<TestSocketState>> incoming;
+  bool closed{false};
+  bool peer_closed{false};
+  bool bind_failed{false};
+  bool read_failed{false};
+  bool write_failed{false};
+  size_t write_limit{512};
+};
+inline std::shared_ptr<TestSocketState> test_listener;
+inline bool test_bind_failed = false;
+class Socket {
+ public:
+  explicit Socket(std::shared_ptr<TestSocketState> state) : state_(std::move(state)) {}
+  ~Socket() { this->close(); }
+  int close() { this->state_->closed = true; return 0; }
+  int setblocking(bool) { return 0; }
+  int setsockopt(int, int, const void *, socklen_t) { return 0; }
+  int bind(const sockaddr *, socklen_t) { return this->state_->bind_failed ? -1 : 0; }
+  int listen(int) { return 0; }
+  std::unique_ptr<Socket> accept_loop_monitored(sockaddr *, socklen_t *) {
+    if (this->state_->incoming.empty()) { errno = EAGAIN; return nullptr; }
+    auto incoming = this->state_->incoming.front();
+    this->state_->incoming.pop_front();
+    return std::make_unique<Socket>(incoming);
+  }
+  std::ptrdiff_t read(void *data, size_t size) {
+    if (this->state_->read_failed) { errno = ECONNRESET; return -1; }
+    if (this->state_->input.empty()) {
+      if (this->state_->peer_closed) return 0;
+      errno = EAGAIN;
+      return -1;
+    }
+    size_t count = 0;
+    while (count < size && !this->state_->input.empty()) {
+      static_cast<uint8_t *>(data)[count++] = this->state_->input.front();
+      this->state_->input.pop_front();
+    }
+    return static_cast<std::ptrdiff_t>(count);
+  }
+  std::ptrdiff_t write(const void *data, size_t size) {
+    if (this->state_->write_failed) { errno = ECONNRESET; return -1; }
+    if (this->state_->write_limit == 0) { errno = EAGAIN; return -1; }
+    size = std::min(size, this->state_->write_limit);
+    const auto *bytes = static_cast<const uint8_t *>(data);
+    this->state_->output.insert(this->state_->output.end(), bytes, bytes + size);
+    return static_cast<std::ptrdiff_t>(size);
+  }
+ protected:
+  std::shared_ptr<TestSocketState> state_;
+};
+using ListenSocket = Socket;
+inline std::unique_ptr<ListenSocket> socket_ip_loop_monitored(int, int) {
+  test_listener = std::make_shared<TestSocketState>();
+  test_listener->bind_failed = test_bind_failed;
+  return std::make_unique<ListenSocket>(test_listener);
+}
+inline socklen_t set_sockaddr_any(sockaddr *, socklen_t size, uint16_t) { return size; }
+}  // namespace socket
+#endif
 struct TestLog {
   std::string level;
   std::string tag;
@@ -65,6 +138,9 @@ class Component {
 namespace uart {
 class UARTDevice {
  public:
+  UARTDevice *parent_{this};
+  size_t test_tx_capacity{128};
+  size_t available_for_write() const { return this->test_tx_capacity; }
   std::deque<uint8_t> input;
   std::vector<std::vector<uint8_t>> writes;
   size_t available() const { return input.size(); }

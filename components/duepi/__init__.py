@@ -1,16 +1,30 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import switch as esphome_switch, uart
+from esphome import final_validate as fv
+from esphome.components import socket, switch as esphome_switch, uart
 from esphome.const import CONF_ID
 
 DEPENDENCIES = ["uart"]
-AUTO_LOAD = ["sensor", "text_sensor", "binary_sensor", "climate", "number", "button", "switch"]
+def AUTO_LOAD(config):
+    components = ["sensor", "text_sensor", "binary_sensor", "climate", "number", "button", "switch"]
+    return components + (["socket", "network"] if "tcp_emulator" in config else [])
 MULTI_CONF = False
 
 duepi_ns = cg.esphome_ns.namespace("duepi")
 DuepiHub = duepi_ns.class_("DuepiHub", cg.Component, uart.UARTDevice)
 FirmwareProfile = duepi_ns.enum("FirmwareProfile", is_class=True)
 DuepiStandbySwitch = duepi_ns.class_("DuepiStandbySwitch", esphome_switch.Switch)
+DuepiTCPEmulatorSwitch = duepi_ns.class_("DuepiTCPEmulatorSwitch", esphome_switch.Switch)
+TCP_EMULATOR_SCHEMA = cv.All(esphome_switch.switch_schema(
+    DuepiTCPEmulatorSwitch, default_restore_mode="DISABLED", block_inverted=True, entity_category="config"
+).extend({
+    cv.Optional("name", default="TCP Emulator"): cv.string_strict,
+    cv.Optional("port", default=2000): cv.All(cv.port, cv.Range(min=1)),
+    cv.Optional("restore_mode", default="DISABLED"): cv.enum(
+        {"DISABLED": esphome_switch.RESTORE_MODES["DISABLED"]}, upper=True
+    ),
+}), socket.consume_sockets(2, "duepi.tcp_emulator"),
+    socket.consume_sockets(1, "duepi.tcp_emulator", socket.SocketType.TCP_LISTEN))
 STANDBY_SCHEMA = esphome_switch.switch_schema(
     DuepiStandbySwitch, default_restore_mode="DISABLED", block_inverted=True, entity_category="config"
 ).extend({
@@ -67,6 +81,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional("installer_parameter_min", default=0): cv.int_range(min=0, max=255),
             cv.Optional("installer_parameter_max", default=255): cv.int_range(min=0, max=255),
             cv.Optional("standby_mode"): STANDBY_SCHEMA,
+            cv.Optional("tcp_emulator"): TCP_EMULATOR_SCHEMA,
             cv.Optional("enable_custom_commands"): cv.invalid("Use enable_installer to include all advanced capabilities"),
             cv.Optional("enable_raw_commands"): cv.invalid("Use enable_installer to include all advanced capabilities"),
             **{
@@ -81,10 +96,16 @@ CONFIG_SCHEMA = cv.All(
     validate_timings,
 )
 
-FINAL_VALIDATE_SCHEMA = uart.final_validate_device_schema(
+def validate_tcp_emulator_logger(config):
+    if "tcp_emulator" in config and fv.full_config.get().get("logger", {}).get("baud_rate", 0) != 0:
+        raise cv.Invalid("tcp_emulator requires logger.baud_rate: 0; use network logs, not the stove UART")
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = cv.All(uart.final_validate_device_schema(
     "duepi", baud_rate=115200, require_tx=True, require_rx=True,
     data_bits=8, parity="NONE", stop_bits=1,
-)
+), validate_tcp_emulator_logger)
 
 from .automation import ACTIONS as DUEPI_ACTIONS
 
@@ -99,6 +120,11 @@ async def to_code(config):
     cg.add(hub.set_min_temperature(config["min_temperature"]))
     cg.add(hub.set_max_temperature(config["max_temperature"]))
     cg.add(hub.set_firmware_profile(config["firmware_profile"]))
+    if "tcp_emulator" in config:
+        cg.add_define("USE_DUEPI_TCP_EMULATOR")
+        emulator = await esphome_switch.new_switch(config["tcp_emulator"])
+        cg.add(emulator.set_parent(hub))
+        cg.add(hub.set_tcp_emulator(emulator, config["tcp_emulator"]["port"]))
     if config["enable_installer"] or "standby_mode" in config:
         cg.add_define("USE_DUEPI_INSTALLER")
         cg.add(hub.set_installer_parameter_range(config["installer_parameter_min"], config["installer_parameter_max"]))

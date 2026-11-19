@@ -8,6 +8,9 @@
 #endif
 #include "privileged.h"
 #include "transaction.h"
+#ifdef USE_DUEPI_TCP_EMULATOR
+#include "tcp_emulator.h"
+#endif
 #include "esphome/core/component.h"
 #include "esphome/core/preferences.h"
 #include "esphome/components/uart/uart.h"
@@ -19,6 +22,9 @@ namespace esphome {
 namespace duepi {
 
 class DuepiHub : public Component, public uart::UARTDevice, private TransactionIO {
+#ifdef USE_DUEPI_TCP_EMULATOR
+  friend class DuepiTCPEmulator;
+#endif
  public:
   DuepiHub() : engine_(*this) {}
   void setup() override;
@@ -48,6 +54,13 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   void set_firmware_profile(FirmwareProfile value) { this->policy_.profile = value; }
   void set_climate(DuepiClimate *entity) { this->climate_ = entity; }
   void set_level_number(DuepiLevel *entity) { this->level_number_ = entity; }
+#ifdef USE_DUEPI_TCP_EMULATOR
+  void set_tcp_emulator(DuepiTCPEmulatorSwitch *entity, uint16_t port) {
+    this->tcp_emulator_switch_ = entity;
+    this->tcp_emulator_port_ = port;
+  }
+  bool set_tcp_emulator_enabled(bool value);
+#endif
   bool request_off();
   bool request_start();
   bool request_target(float value);
@@ -85,6 +98,13 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   void set_privilege_switch(size_t index, DuepiPrivilegeSwitch *entity) { this->privilege_switches_[index] = entity; }
 
  protected:
+  bool tcp_emulator_owns_uart_() const {
+#ifdef USE_DUEPI_TCP_EMULATOR
+    return this->tcp_emulator_enabled_ || this->tcp_emulator_transition_;
+#else
+    return false;
+#endif
+  }
   void transmit(const WireFrame &frame) override;
   void result(const Request &request, Outcome outcome, const Response *response) override;
   bool may_transmit(const Request &request, uint32_t now) override;
@@ -127,6 +147,15 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   ESPPreferenceObject temperature_preferences_;
   bool temperature_preferences_ready_{false};
   TransactionEngine engine_;
+#ifdef USE_DUEPI_TCP_EMULATOR
+  DuepiTCPEmulator tcp_emulator_{this};
+  DuepiTCPEmulatorSwitch *tcp_emulator_switch_{nullptr};
+  uint16_t tcp_emulator_port_{2000};
+  bool tcp_emulator_enabled_{false};
+  bool tcp_emulator_transition_{false};
+  uint32_t tcp_emulator_transition_at_{0};
+  uint32_t tcp_emulator_last_rx_{0};
+#endif
   ObservedState state_;
   ControlPolicy policy_;
   DuepiClimate *climate_{nullptr};

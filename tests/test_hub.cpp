@@ -144,14 +144,14 @@ void power_preset_tests() {
     climate::ClimateCall invalid;
     invalid.custom_preset = "Power level 6";
     climate.control(invalid);
-    CHECK(hub.queued() == 1);
+    CHECK(hub.queued() == 0);
     CHECK(climate.get_custom_preset() == call.custom_preset);
     if (level == 1) {
       hub.observe(Command::PHASE, 0);
     } else if (level == 2) {
       climate.control(call);
       hub.observe(Command::PHASE, 0x030100);
-      CHECK(hub.queued() == 1);
+      CHECK(hub.queued() == 0);
     } else if (level == 3) {
       test_now = 45001;
       hub.publish();
@@ -332,11 +332,6 @@ void power_feedback_tests() {
     CHECK(status.state.find("requested=3 reported=1: readback mismatch") != std::string::npos);
     CHECK(number.state == 1);
     CHECK(climate.get_custom_preset() == "Min");
-    CHECK(status.state.find("verification pending") != std::string::npos);
-    hub.observe(Command::REQUESTED_POWER, 0x000300);
-    CHECK(number.state == 3 && reported.state == 3);
-    CHECK(climate.get_custom_preset() == "Medium");
-    CHECK(status.state.find("verified by readback") != std::string::npos);
     CHECK(hub.request_level(4));
     test_now = 301;
     hub.tick();
@@ -350,8 +345,6 @@ void power_feedback_tests() {
     test_now = 401;
     hub.tick();
     hub.receive("000000");
-    hub.observe(Command::REQUESTED_POWER, 0x000100);
-    CHECK(status.state.find("verification pending") != std::string::npos);
     test_now = 15401;
     hub.observe(Command::REQUESTED_POWER, 0x000200);
     CHECK(status.state.find("readback unavailable") != std::string::npos);
@@ -380,12 +373,12 @@ void power_feedback_tests() {
     hub.tick();
     test_now = 1;
     hub.receive("000000");
-    const char *replies[] = {"000300", "A06000", "000000", "020100", "00D700", "000000"};
+    const char *replies[] = {"A06000", "000000", "020100", "00D700", "000000", "000300"};
     for (size_t index = 0; index < 6; ++index) {
       test_now = 101 + index * 100;
       hub.poll();
       CHECK(hub.writes.size() == index + 2);
-      if (index == 0)
+      if (index == 5)
         CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RC5000");
       hub.receive(replies[index]);
     }
@@ -395,50 +388,6 @@ void power_feedback_tests() {
     hub.recover();
     hub.publish();
     CHECK(std::isnan(number.state));
-  }
-  for (bool power_already_queued : {false, true}) {
-    test_now = 0;
-    TestHub hub;
-    hub.set_inter_transaction_delay(600);
-    hub.setup();
-    hub.synchronize();
-    hub.observe(Command::PHASE, 0x020100);
-    CHECK(hub.queue({Command::FLUE}));
-    if (power_already_queued) CHECK(hub.queue({Command::REQUESTED_POWER}));
-    CHECK(hub.queue({Command::TARGET}));
-    CHECK(hub.request_level(3));
-    hub.tick();
-    test_now = 1;
-    hub.receive("000000");
-    CHECK(hub.queued() == 3);
-    test_now = 600;
-    hub.poll();
-    CHECK(hub.writes.size() == 1);
-    test_now = 601;
-    hub.poll();
-    CHECK(hub.writes.size() == 2);
-    CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RC5000");
-    hub.receive("000300");
-    test_now = 1201;
-    hub.poll();
-    CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RD0000");
-    CHECK(hub.writes.size() == 3 && hub.queued() == 1);
-  }
-  {
-    test_now = 0;
-    TestHub hub;
-    hub.setup();
-    hub.synchronize();
-    hub.observe(Command::PHASE, 0x020100);
-    CHECK(hub.request_level(3));
-    hub.tick();
-    CHECK(hub.queue({Command::FLUE}));
-    CHECK(hub.request_off());
-    test_now = 1;
-    hub.receive("000000");
-    test_now = 101;
-    hub.poll();
-    CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RF0000");
   }
   for (bool enabled : {false, true}) {
     test_now = 0;
@@ -455,12 +404,6 @@ void power_feedback_tests() {
       hub.receive(replies[index]);
       test_now += 100;
     }
-    hub.synchronize();
-    hub.observe(Command::PHASE, 0x020100);
-    CHECK(hub.request_level(3));
-    hub.tick();
-    hub.receive("000000");
-    CHECK(hub.queued() == (enabled ? 1U : 0U));
   }
   for (FirmwareProfile profile : {FirmwareProfile::FW_9200, FirmwareProfile::FW_E670, FirmwareProfile::FW_E693}) {
     test_now = 0;
@@ -1998,7 +1941,166 @@ void optional_diagnostic_tests() {
   std::cout << "PASS: optional diagnostic polling, byte/word decoding, cycle formatting, freshness and runtime ordering\n";
 }
 
+#ifdef USE_DUEPI_TCP_EMULATOR
+class TestEmulatorSwitch : public DuepiTCPEmulatorSwitch {
+ public:
+  using DuepiTCPEmulatorSwitch::write_state;
+};
+
+void tcp_emulator_tests() {
+  test_now = 100;
+  TestHub hub;
+  TestEmulatorSwitch mode;
+  binary_sensor::BinarySensor health;
+  sensor::Sensor room;
+  mode.set_parent(&hub);
+  hub.set_tcp_emulator(&mode, 2000);
+  hub.set_communication_sensor(&health);
+  hub.set_numeric_sensor(static_cast<size_t>(Command::ROOM), &room);
+  hub.setup();
+  CHECK(!mode.state);
+  hub.synchronize();
+  CHECK(health.state);
+#ifdef USE_DUEPI_INSTALLER
+  TestStandbySwitch standby;
+  standby.set_parent(&hub);
+  hub.set_standby_mode(&standby, 28);
+  hub.set_enable_installer(true);
+  hub.set_enable_custom_commands(true);
+  CHECK(hub.set_installer_access(true));
+#endif
+  hub.set_init_command(true);
+  CHECK(hub.request_target(22));
+  hub.tick();
+  CHECK(hub.request_off());
+  size_t writes = hub.writes.size();
+  mode.write_state(true);
+  CHECK(mode.state);
+  CHECK(hub.queued() == 0);
+  CHECK(!health.state && std::isnan(room.state));
+  CHECK(!hub.request_start() && !hub.request_off() && !hub.request_target(21) && !hub.request_level(2));
+#ifdef USE_DUEPI_INSTALLER
+  hub.set_enable_installer(true);
+  hub.set_enable_custom_commands(true);
+  CHECK(!hub.set_installer_access(true));
+  CHECK(!hub.installer_read(1));
+  CHECK(!hub.request_installer_write(1, 1));
+  CHECK(!hub.request_custom("F001", false));
+  CHECK(!hub.request_standby(true));
+#endif
+  auto listener = socket::test_listener;
+  auto client = std::make_shared<socket::TestSocketState>();
+  listener->incoming.push_back(client);
+  hub.input = {0x1B, 'o', 'l', 'd', '&'};
+  hub.loop();
+  CHECK(listener->incoming.size() == 1 && hub.writes.size() == writes);
+  test_now += 799;
+  hub.loop();
+  CHECK(listener->incoming.size() == 1);
+  test_now += 1;
+  hub.loop();
+  CHECK(listener->incoming.empty() && client->output.empty());
+  const std::vector<uint8_t> raw = {0, 0x1B, 0x1C, 0xFF, '&', 'R', 'F', '0', '0', '2'};
+  client->input.insert(client->input.end(), raw.begin(), raw.begin() + 3);
+  hub.test_tx_capacity = 0;
+  hub.loop();
+  CHECK(hub.writes.size() == writes && client->input.size() == 3);
+  hub.test_tx_capacity = 3;
+  hub.loop();
+  hub.test_tx_capacity = 128;
+  client->input.insert(client->input.end(), raw.begin() + 3, raw.end());
+  hub.loop();
+  CHECK(hub.writes.size() == writes + 2);
+  std::vector<uint8_t> forwarded = hub.writes[writes];
+  forwarded.insert(forwarded.end(), hub.writes.back().begin(), hub.writes.back().end());
+  CHECK(forwarded == raw);
+  client->write_limit = 2;
+  hub.input.insert(hub.input.end(), raw.begin(), raw.end());
+  for (size_t iteration = 0; iteration < 10; ++iteration) hub.loop();
+  CHECK(client->output == raw);
+  bool captured_tx = false, captured_rx = false;
+  for (const auto &entry : test_logs) {
+    if (entry.tag != "duepi.tcp_emulator" || entry.level != "VERBOSE") continue;
+    captured_tx |= entry.message.find("ms TCP->UART [3]: 00 1B 1C ") != std::string::npos;
+    captured_rx |= entry.message.find("ms UART->TCP [10]: 00 1B 1C FF 26 ") != std::string::npos;
+  }
+  CHECK(captured_tx && captured_rx);
+  auto second = std::make_shared<socket::TestSocketState>();
+  listener->incoming.push_back(second);
+  hub.loop();
+  CHECK(second->closed && !client->closed);
+  client->write_limit = 0;
+  hub.input = {1, 2, 3};
+  hub.loop();
+  client->peer_closed = true;
+  hub.loop();
+  CHECK(client->closed);
+  size_t before_disconnected = hub.writes.size();
+  test_now += 100000;
+  hub.loop();
+  CHECK(mode.state && hub.writes.size() == before_disconnected);
+  hub.input = {4, 5, 6};
+  auto replacement = std::make_shared<socket::TestSocketState>();
+  listener->incoming.push_back(replacement);
+  hub.loop();
+  CHECK(replacement->output.empty());
+  size_t before_idle = hub.writes.size();
+  test_now += 100000;
+  hub.loop();
+  CHECK(hub.writes.size() == before_idle && replacement->output.empty());
+  mode.write_state(false);
+  CHECK(!mode.state && replacement->closed && listener->closed);
+  CHECK(!hub.request_target(22));
+  hub.input = {0, 0x1B, 0xFF};
+  hub.loop();
+  test_now += 800;
+  hub.loop();
+  hub.loop();
+  CHECK(hub.writes.size() == before_idle + 1);
+  CHECK(std::string(hub.writes.back().begin() + 1, hub.writes.back().begin() + 7) == "RDC000");
+  CHECK(!hub.request_target(22));
+  socket::test_bind_failed = true;
+  mode.write_state(true);
+  CHECK(!mode.state && socket::test_listener->closed);
+  socket::test_bind_failed = false;
+
+  for (int failure = 0; failure < 4; ++failure) {
+    test_now = 0;
+    TestHub uart;
+    DuepiTCPEmulator bridge(&uart);
+    CHECK(bridge.start(2000));
+    auto slow = std::make_shared<socket::TestSocketState>();
+    socket::test_listener->incoming.push_back(slow);
+    bridge.loop();
+    slow->write_limit = 0;
+    if (failure == 0) {
+      uart.input.resize(640, 0xFF);
+      for (int iteration = 0; iteration < 5; ++iteration) bridge.loop();
+    } else if (failure == 1) {
+      uart.input.push_back(1);
+      bridge.loop();
+      test_now = 3000;
+      bridge.loop();
+    } else if (failure == 2) {
+      slow->read_failed = true;
+      bridge.loop();
+    } else {
+      slow->write_failed = true;
+      uart.input.push_back(1);
+      bridge.loop();
+    }
+    CHECK(slow->closed);
+    bridge.stop();
+  }
+  test_now = 0;
+  std::cout << "PASS: TCP emulator boot-off, ownership, handover, guards, binary forwarding, partial writes, isolation and failures\n";
+}
+#endif
+
 int main() {
+#ifdef USE_DUEPI_TCP_EMULATOR
+  tcp_emulator_tests();
+#endif
 #ifdef USE_DUEPI_INSTALLER
   installer_parameter_range_tests();
 #endif

@@ -14,6 +14,9 @@ void DuepiHub::setup() {
   this->retained_target_ = NAN;
   this->retained_target_requested_ = false;
   this->publish_requested_level_(0);
+#ifdef USE_DUEPI_TCP_EMULATOR
+  if (this->tcp_emulator_switch_ != nullptr) this->tcp_emulator_switch_->publish_state(false);
+#endif
 #ifdef USE_DUEPI_INSTALLER
   this->installer_permission_.set_enabled(false);
   this->custom_permission_.set_enabled(false);
@@ -101,6 +104,7 @@ void DuepiHub::diagnostic(const Request &request, const char *message) {
 }
 
 bool DuepiHub::may_transmit(const Request &request, uint32_t now) {
+  if (this->tcp_emulator_owns_uart_()) return false;
 #ifdef USE_DUEPI_INSTALLER
   if (!this->installer_request_allowed_(request)) {
     this->diagnostic(request, "installer parameter outside configured range");
@@ -192,6 +196,10 @@ void DuepiHub::publish_temperature_limits_() {
 }
 
 bool DuepiHub::submit_(Request request) {
+  if (this->tcp_emulator_owns_uart_()) {
+    this->reject_control("Rejected: TCP emulator owns UART or handover is pending");
+    return false;
+  }
   uint32_t now = millis();
   if (this->write_blocked_(request.command)) {
     this->reject_control("Rejected: ordinary shutdown active or OFF pending");
@@ -327,10 +335,11 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
     if (request.command == Command::REQUESTED_POWER) {
       if (this->verification_pending_ && this->verification_.command == Command::SET_LEVEL &&
           this->verification_.token == this->token_ && response->word() != this->verification_.argument) {
-        char buffer[144];
-        std::snprintf(buffer, sizeof(buffer), "set_level #%u requested=%u reported=%u: readback mismatch (verification pending)",
+        char buffer[112];
+        std::snprintf(buffer, sizeof(buffer), "set_level #%u requested=%u reported=%u: readback mismatch",
                       unsigned(this->verification_.token), unsigned(this->verification_.argument), unsigned(response->word()));
         if (this->text_[4] != nullptr) this->text_[4]->publish_state(buffer);
+        this->verification_pending_ = false;
       }
     }
     if (this->verification_pending_ && this->verification_.token == this->token_ &&
@@ -382,8 +391,6 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
       this->verification_ = request;
       this->verification_pending_ = true;
       this->verification_at_ = millis();
-      if (request.command == Command::SET_LEVEL && this->read_power_level_)
-        this->engine_.enqueue({Command::REQUESTED_POWER}, millis(), true);
       if (request.command == Command::OFF || request.command == Command::RESET ||
           request.command == Command::START_9200 || request.command == Command::START_E670 ||
           request.command == Command::START_E693 || request.command == Command::START_GENERIC) this->sync_mask_ = 0;
@@ -486,6 +493,24 @@ void DuepiHub::schedule_(uint32_t now) {
 }
 
 void DuepiHub::loop() {
+#ifdef USE_DUEPI_TCP_EMULATOR
+  if (this->tcp_emulator_transition_) {
+    uint8_t discarded = 0;
+    for (size_t budget = 0; budget < 128 && this->available() != 0; ++budget) {
+      if (!this->read_byte(&discarded)) break;
+      this->tcp_emulator_last_rx_ = millis();
+    }
+    uint32_t now = millis();
+    if (this->available() != 0 || uint32_t(now - this->tcp_emulator_transition_at_) < this->engine_.timeout ||
+        uint32_t(now - this->tcp_emulator_last_rx_) < this->engine_.quiet_time) return;
+    this->tcp_emulator_transition_ = false;
+    ESP_LOGI(TAG, "UART handover complete: %s", this->tcp_emulator_enabled_ ? "TCP emulator ready" : "normal polling resuming");
+  }
+  if (this->tcp_emulator_enabled_) {
+    this->tcp_emulator_.loop();
+    return;
+  }
+#endif
   uint8_t byte = 0;
   for (size_t budget = 0; budget < 64 && this->available() != 0; ++budget) {
     if (!this->read_byte(&byte)) break;
