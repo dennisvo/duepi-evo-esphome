@@ -140,10 +140,12 @@ text_sensor:
     transaction:
       name: Transaction Result
       entity_category: diagnostic
-    last_response:
-      name: Last Accepted Response Uptime
-      entity_category: diagnostic
-      icon: mdi:clock-check-outline
+    # Optional debugging diagnostic; not needed for normal day-to-day use.
+    # Use Stove Communication for normal communication health monitoring.
+    # last_response:
+    #   name: Last Accepted Response Uptime
+    #   entity_category: diagnostic
+    #   icon: mdi:clock-check-outline
     target_source:
       name: Target Temperature Source
       entity_category: diagnostic

@@ -253,9 +253,23 @@ remains off.
 
 ## Development
 
-Use the Python 3.13 environment and pinned dependencies described in the
-[README](../README.md#development). Run `.venv\Scripts\python.exe -m pip check`
-to check installed dependency compatibility.
+Use Python 3.13 and the [pinned development dependencies](../requirements-dev.txt).
+Configure pip to use your required package index before installing. On Windows:
+
+```text
+py -3.13 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m pip check
+.venv\Scripts\python.exe tests/run_host_tests.py
+.venv\Scripts\python.exe tests/test_config.py
+.venv\Scripts\python.exe tests/validate_examples.py config
+.venv\Scripts\python.exe tests/validate_examples.py compile
+```
+
+On Linux or macOS, create the environment with `python3.13 -m venv .venv` and
+use `.venv/bin/python` in place of `.venv\Scripts\python.exe`. For unpublished
+component changes, use a local source as described in
+[device setup](CONFIGURATION.md#device-setup).
 
 The host suites exercise the protocol/transaction engine and actual hub/climate
 adapters, with installer support both included and excluded. Their fixtures are

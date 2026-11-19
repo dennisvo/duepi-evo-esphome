@@ -159,7 +159,7 @@ and send; heating, cleaning, eco and shutdown are not excluded. Explicit Off
 submission cancels older queued writes. General operations require Installer
 Access. Optional `standby_mode` uses an independent exact-address 0/1 permission;
 address 28 was confirmed on the tested stove, not established as universal.
-See [parameter-change guidance](../README.md#read-or-write-a-parameter).
+See [parameter-change guidance](CONFIGURATION.md#read-or-write-a-parameter).
 
 Custom commands use either a four-hex-digit body (`Rxxxx0`) or a complete
 six-character raw payload of uppercase letters and digits.

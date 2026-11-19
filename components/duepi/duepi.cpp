@@ -390,10 +390,9 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
       this->cursor_ = 0;
     }
   }
-  if (this->token_ == 0 && this->text_[4] != nullptr && (outcome == Outcome::ACKNOWLEDGED || outcome == Outcome::TIMED_OUT)) {
+  if (this->token_ == 0 && this->text_[4] != nullptr && outcome == Outcome::TIMED_OUT) {
     char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "Read %u: %s", unsigned(request.command),
-                  outcome == Outcome::ACKNOWLEDGED ? "response accepted" : "timed out");
+    std::snprintf(buffer, sizeof(buffer), "Read %u: timed out", unsigned(request.command));
     this->text_[4]->publish_state(buffer);
   }
 }

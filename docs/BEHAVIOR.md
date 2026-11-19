@@ -196,6 +196,11 @@ prove application; a missing acknowledgement does not prove failure. Only the
 latest normal command can be verified within the 15-second readback window:
 target by target readback, power by `C500`, Off by reported Off, Start by reported
 ignition. Reset remains unverified. These reports do not prove physical safety.
+Successful background reads update telemetry and freshness without changing
+Transaction Result. Before the first normal command, exhausted read timeouts
+can appear there; later background timeouts do not overwrite command results.
+Read timeouts also produce rate-limited warnings, and individual transactions
+remain available in DEBUG logs.
 
 General installer operations require build-time inclusion, Installer Access and
 fresh synchronized prerequisites. Access starts off after reboot. Turning it off
@@ -208,7 +213,10 @@ observation cycle before normal controls resume.
 Replies contain no usable request identifier, so even matching readback has
 correlation limits. See [architecture](ARCHITECTURE.md#state-and-authorization).
 The last-response diagnostic is wrapping device uptime at the last accepted
-response, not UTC or response age.
+response, not UTC or response age. It updates on every accepted response and is
+opt-in for debugging, commented out in both examples. Normal day-to-day monitoring
+uses Stove Communication instead; one accepted response does not prove all core
+readings are fresh.
 
 Sources: [transaction handling](../components/duepi/transaction.cpp),
 [installer handling](../components/duepi/privileged.cpp),
@@ -234,7 +242,7 @@ verification path are still required. The phase guard runs at submission and
 actual transmission. Unknown/stale phase or recovery fails closed. A physical
 phase change between polls can still escape detection; this is not an interlock.
 
-Follow the [manufacturer's parameter-change guidance](../README.md#read-or-write-a-parameter):
+Follow the [manufacturer's parameter-change guidance](CONFIGURATION.md#read-or-write-a-parameter):
 never change parameters during startup because released gas can ignite and cause
 overpressure; plan the changes first, prefer a non-burning stove, and minimize
 programming-menu time if the stove is burning. Allowing a phase is a component

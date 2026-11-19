@@ -21,11 +21,8 @@ this project. The software is provided without warranty; see [LICENSE](LICENSE).
 - [Status and Scope](#status-and-scope)
 - [Stove Compatibility](#stove-compatibility)
 - [Setup](#setup)
-- [Hub Configuration](#hub-configuration)
-- [Normal Controls](#normal-controls)
-- [Telemetry and Outcomes](#telemetry-and-outcomes)
-- [Installer and Custom Commands](#installer-and-custom-commands)
-- [Logging](#logging)
+- [Features](#features)
+- [Documentation](#documentation)
 - [Development](#development)
 - [Todo](#todo)
 - [License](#license)
@@ -40,7 +37,7 @@ the board type does not enable a Hydro profile or prevent commands on Hydro hard
 The component is not tied to a particular ESP32 board: board selection and UART
 pins are configured in YAML. Use an ESPHome-supported ESP32 board with the
 ESP-IDF framework and suitable UART pins. The example has been validated and
-compiled for the **Seeed XIAO ESP32-C3/C6**, with ESPHome **2026.10.2** and ESP-IDF
+compiled for the **Seeed XIAO ESP32-C3/C6**, with ESPHome **2026.11.0** and ESP-IDF 
 **5.5.6**; other ESP32 boards have not yet been build-tested. Controller
 compatibility, wiring and electrical levels must be checked for each installation.
 ESP8266 and vendor-app/TCP connections are not supported.
@@ -75,417 +72,53 @@ Hydro-specific features are not implemented.
 
 ## Setup
 
-### Hardware
-
-See the [hardware reference](docs/HARDWARE.md) for collected connector pinouts,
-cable color codes and connection notes, including the reported JP8 WiFi wiring.
-Verify these details for your controller and cable before connecting.
-
-For example hardware setups, see
-[mvroosmalen's ESPHome-Duepi repository](https://github.com/mvroosmalen1970/ESPHome-Duepi).
-
-**The tested stove's UART logic levels have been confirmed as 5 V with a
-multimeter.** Although users report working setups with direct connections
-between ESP boards and pellet stoves, those reports do not establish
-electrical safety. ESP32 GPIO expects 3.3 V logic and is not 5 V tolerant, so a
-suitable 5 V / 3.3 V UART logic-level shifter is advisable to avoid damaging the
-ESP32 input. Verify the levels and wiring on your particular controller before
-connecting, and verify telemetry before issuing commands.
-
-### Installation
-
-1. Identify the controller model/firmware, connector orientation, supply and UART
-	pinout. Do not assume a universal pinout or bypass stove safety systems.
+1. Read the [hardware reference](docs/HARDWARE.md) before connecting anything.
+   It covers controller identification, connector pinouts, wiring and electrical
+   precautions; verify them for the actual installation.
 2. Start from [examples/esp32-c3.yaml](examples/esp32-c3.yaml) or
-	[examples/esp32-c6.yaml](examples/esp32-c6.yaml) for your ESPHome device configuration.
-	For a different ESP32 board, change `esp32.board` to its ESPHome board ID and
-	set `uart.tx_pin` and `uart.rx_pin` to suitable pins for that board. Keep the
-	ESP-IDF framework and revalidate/recompile your configuration. The examples'
-	GPIO assignments are starting points, not verified stove wiring diagrams or
-	universal ESP32 pin choices. Review board pin
-	conflicts and UART wiring before connecting.
-3. Create a private `secrets.yaml` next to your configuration, with `wifi_ssid`,
-	`wifi_password`, a unique fallback Wi-Fi `ap_password` and a unique per-device,
-	base64-encoded 32-byte
-	`device_encryption_key`. The values in [examples/secrets.yaml.example](examples/secrets.yaml.example)
-	are placeholders; replace them before installing on a device.
-4. Validate and compile the configuration in ESPHome, then install it on the ESP32.
-	Add the device through Home Assistant's ESPHome integration using the same API
-	encryption key. Verify communication
-	health and readings before using any controls.
+   [examples/esp32-c6.yaml](examples/esp32-c6.yaml). Adapt the board, UART pins and
+   private secrets using the [configuration guide](docs/CONFIGURATION.md#device-setup)
+   and [secrets example](examples/secrets.yaml.example).
+3. Validate, compile and install through ESPHome, then add the device using Home
+   Assistant's ESPHome integration. Verify **Stove Communication** and readings
+   before using controls. Do not bypass the stove's own safety systems.
 
-## Hub Configuration
+## Features
 
-The examples include telemetry and normal control entities. Normal controls need
-no write-enable setting. Alarm reset requires `enable_reset: true`; advanced
-commands require `enable_installer: true`. Both flags default to false and are
-independent. Remove the obsolete `enable_writes` option from existing YAML;
-normal controls are now available without it, including configurations that
-previously used `enable_writes: false`.
+- **Monitoring:** temperatures, operating phase, alarms, selected power, auger/fan
+	readings and communication health, plus optional diagnostics.
+- **Normal controls:** climate HEAT/OFF, target temperature and power presets.
+	Command results distinguish acknowledgement from readback verification.
+- **Standby:** an optional switch for a confirmed controller-specific parameter;
+	the stove manages stopping and restarting.
+- **Installer mode:** parameter reads/writes and custom commands. To enable
+	installer mode, set `enable_installer: true`, rebuild and install, then turn on
+	Installer Access. See the [installer guide](docs/CONFIGURATION.md#installer-mode)
+	before using it. Alarm reset has its own separate opt-in.
 
-Enabling installer support includes its controls and API actions in the firmware
-and generates one **Installer Access** switch. Access always starts off after
-reboot and can be switched on/off in Home Assistant without rebuilding. Normal
-controls do not depend on this switch. With installer support disabled, advanced
-controls, actions and their implementation are excluded from the firmware.
+Controls depend on fresh stove readings and operating-state permissions. Startup
+and reconnection do not reapply desired settings, and writes are not automatically
+retried. Use the stove's own safety controls; see
+[operating behavior](docs/BEHAVIOR.md) for restrictions and limitations.
 
-`firmware_profile` defaults `auto`: start with fresh controller-reported power,
-or level 1 if unavailable, using `F001`..`F005` independently of the firmware identifier.
-Alternatives `"9200"`, `E670`, `E693` retain explicit legacy start overrides only.
-`read_power_level` defaults true and polls `C500`; set it false only for
-controllers that do not support this read. Disabling it leaves power writes
-available but prevents power-level readback verification and leaves power
-controls unknown without fresh feedback.
-UART uses 115200 baud, 8N1; serial logging is disabled in the example.
+## Documentation
 
-Set room-temperature command limits on the hub:
-
-```yaml
-duepi:
-  id: stove
-  min_temperature: 10
-  max_temperature: 25
-  init_command: false
-```
-
-`min_temperature` and `max_temperature` default to 10 and 25 degrees Celsius.
-They must be whole numbers within 10..35, with minimum less than maximum. They
-limit selectable targets and actual commands; the controller may enforce its
-own model-specific limits. These are **integration settings**, not installer
-parameters: changing them sends no stove command and does not change the current
-target. A valid target read from the stove remains visible outside these limits.
-
-The example exposes **Minimum Target Temperature** and **Maximum Target
-Temperature** under Configuration on the Home Assistant device page; see
-[the configuration example](examples/esp32-c3.yaml) for their YAML definitions.
-They send no stove commands and obey the same limits as YAML. To move
-both limits past an existing boundary, expand the range first. Rejected changes
-leave both previous values intact.
-
-Accepted changes apply immediately, including to queued targets, and are saved
-for reboot restoration. Saved limits take precedence over YAML defaults. Allow
-ESPHome's pending preference writes to finish before removing power. If Home
-Assistant still displays the old selectable range, reload its ESPHome integration;
-command enforcement does not wait for a reload. See
-[State and Authorization](docs/ARCHITECTURE.md#state-and-authorization) for persistence
-and entity-discovery details.
-
-### Initialization Compatibility
-
-Initialization compatibility is a YAML-only stove setting: `duepi.init_command`,
-default false. Enable it only when the controller requires the extra initialization sequence.
-It adds a firmware query before other requests, increasing protocol traffic. If
-initialization times out, the unsent command is cancelled rather than replayed.
-
-Set `init_command: true` and rebuild to opt into this mode. Remove any previous
-`platform: duepi`, `kind: initialization` switch from your YAML. This setting
-only adds initialization before existing transactions. It does not reset alarms, reboot the stove or start ignition.
-See [Queue and Recovery](docs/ARCHITECTURE.md#queue-and-recovery) for sequencing details.
-
-### Polling and Timeouts
-
-| Option | Default | Accepted range |
-| --- | --- | --- |
-| `update_interval` | 10s | 2s..1h |
-| `runtime_interval` | 1h | 1min..24h |
-| `response_timeout` | 800ms | 100ms..5s |
-| `inter_transaction_delay` | 100ms | 20ms..2s |
-| `quiet_time` | 250ms | 100ms..10s |
-| `stale_after` | 45s | 5s..2h, greater than update interval |
-| `arming_timeout` | 30s | 1s..120s |
-
-Intervals use monotonic time, not HA/SNTP. Allow enough freshness margin for a full
-poll cycle and missed optional replies.
-
-## Normal Controls
-
-The example includes climate HEAT/OFF, whole-Celsius targets (10..25 by default)
-and the power presets **Min**, **Low**, **Medium**, **High** and **Max**, mapped
-to controller levels 1, 2, 3, 4 and 5 respectively.
-Normal controls are available without an opt-in. First check communication and
-readings before issuing commands.
-
-Select power directly from the climate entity's preset selector in Home Assistant;
-no extra YAML entity is needed. Power changes while Off are rejected without
-sending or storing a choice. Press HEAT, wait for fresh ignition readings, then
-select power. In ignition/heating, a preset sends a level request without changing
-the target. Presets and the optional number follow fresh controller readback,
-not the requested value or ACK. **Power** is distinct from auger and fan speeds.
-Check Transaction Result for command outcomes.
-See [Power and Actuators](docs/BEHAVIOR.md#power-and-actuators) for startup,
-panel tracking, feedback and restrictions.
-
-The optional controller-level number remains available for existing dashboards.
-It shares the same selection and readback rules as the climate presets; it is not
-an independent setting. Add it only if needed:
-
-```yaml
-number:
-- platform: duepi
-  duepi_id: stove
-  kind: level
-  name: Power
-  mode: box
-```
-
-The optional reset button requires `enable_reset: true` on the hub.
-Adding it while reset is disabled is a configuration
-error. Reset is never automatic. Omit this entire entry when reset is disabled:
-
-```yaml
-button:
-  - platform: duepi
-    duepi_id: stove
-    name: Reset Stove Alarm
-```
-
-Writes require fresh, synchronized stove readings. Start requires observed Off
-and no alarm; power commands require ignition/heating. There is no independent
-auger or fan control. See [operating rules](docs/BEHAVIOR.md#operating-states-and-commands)
-for the phase-specific permissions and climate display behavior.
-
-Automatic startup uses fresh reported power or level 1. Override
-`firmware_profile` only when a legacy start command is required; a profile does not
-establish compatibility or change telemetry decoding or installer parameter
-meanings. The [protocol reference](docs/PROTOCOL.md#write-commands) lists the mappings.
-
-Boot and reconnection do not automatically send desired settings. Writes are
-never automatically retried. The component does not provide emergency-stop
-guarantees; use the stove's own controls and safety procedures.
-
-### Shutdown Protection
-
-Requesting Off cancels older queued writes and blocks conflicting new ones.
-Once ordinary stopping or cooldown is reported, all unsent writes are cancelled
-and new writes are rejected. Reads continue under their normal access requirements.
-Panel shutdown is detected by polling, not immediately. Eco has different rules;
-see [operating states and commands](docs/BEHAVIOR.md#operating-states-and-commands).
-
-## Telemetry and Outcomes
-
-The [C3 example](examples/esp32-c3.yaml#L77) and
-[C6 example](examples/esp32-c6.yaml#L75) define standard telemetry and commented
-opt-in diagnostics. Optional operating controls are described under
-[Normal Controls](#normal-controls); installer entities are generated when
-[installer support](#installer-and-custom-commands) is enabled.
-Rename or omit individual YAML entities to suit your setup.
-The binary `communication` sensor means fresh core stove replies, not merely a
-connected Wi-Fi/API session. All entity platforms use `duepi_id: stove`.
-
-Default Home Assistant Organization:
-
-| Home Assistant section | Entities |
+| Guide | What it covers |
 | --- | --- |
-| Sensors | Room/target temperatures, Power, Auger Level, phase and alarm text |
-| Controls | Climate, optional power-level number and alarm-reset button |
-| Configuration | Target-temperature limits and installer access/parameter tools |
-| Diagnostics | Flue/PCB temperatures, fan/exhaust speeds, runtime counters, communication, raw codes, identity, transaction result, target source, last response, Installer Result, Custom Response Data and the five optional readings below |
-
-These are component schema defaults. For entities declared in your YAML,
-override with `entity_category`; `entity_category: ""` restores normal placement.
-Auto-generated installer entities have fixed categories. Diagnostic
-categorization does not disable an entity.
-
-Startup and stale readings can be unknown. **Fan Speed** uses `D300`;
-**Auger Level** uses `D400`. These are distinct from Power. Existing YAML keys
-`d3000`/`d4000` remain supported. See the [protocol reference](docs/PROTOCOL.md#read-commands).
-The numeric target and power-level sensors are observed readback only.
-Omitting a standard sensor entity does not stop its register being polled.
-Use `read_power_level: false` to disable `C500` polling. The five optional
-diagnostic readings below are polled only when their entities are configured:
-
-| YAML key | Platform | Reading |
-| --- | --- | --- |
-| `flue_extraction_speed` | `sensor` | Raw flue-extraction speed, separate from exhaust RPM |
-| `extraction_sensor_level` | `sensor` | Raw extraction-sensor level |
-| `flue_motor_correction` | `sensor` | Raw correction byte |
-| `pellet_correction` | `sensor` | Raw correction byte |
-| `cycle_time` | `text_sensor` | Two decimal fields, e.g. `10:11`; duration units unverified |
-
-Uncomment the desired entries in either board example to enable them. These are
-read-only sensors, not correction controls. Missing replies use normal read
-timeout/recovery handling; leave unsupported readings out of the configuration.
-
-Alarm descriptions follow the app's default or `RE8I` firmware dictionary;
-unknown codes stay numeric and labels are not universal OEM safety diagnoses.
-`last_response` records wrapping device uptime at the last accepted response,
-formatted as days, hours, minutes and seconds, not UTC or time since that response.
-Existing Home Assistant entity names/categories may
-retain registry customizations; obsolete entities can remain unavailable after
-firmware updates until removed from the entity registry.
-
-Climate can retain an unverified target when readback is unavailable; the numeric
-sensor remains observed-only. **Target Temperature Source** explains that display.
-Always consider phase and communication health: climate OFF alone is not proof
-of a stopped stove. See [temperature targets](docs/BEHAVIOR.md#temperature-targets).
-
-An ACK is not verification, and a missing ACK does not prove failure. Check
-Transaction Result for the outcome. See [communication and outcomes](docs/BEHAVIOR.md#communication-and-outcomes)
-for freshness, recovery and readback rules. Do not write actuator registers or
-installer parameters merely because they are readable.
-
-## Standby Mode
-
-For a controller with a confirmed standby parameter, add this under `duepi:`:
-
-```yaml
-standby_mode: {parameter: 28, name: Standby Mode}
-```
-
-Address 28 with raw values 0 (off) and 1 (on) was confirmed on the tested stove;
-this is not a universal PR-to-serial mapping. The switch works without
-`enable_installer` or Installer Access. It reads the parameter periodically and
-shows the last confirmed value, not an optimistic toggle. It sends no startup
-write. Changes require fresh synchronized readings and a known phase other than
-ignition. The stove manages standby stopping/restarting, not ESPHome.
-See [standby behavior](docs/BEHAVIOR.md#standby-mode) for limitations.
-
-## Installer and Custom Commands
-
-Set `enable_installer: true` under `duepi:`, then
-rebuild and install. The installer controls appear under Configuration in Home
-Assistant; Installer Result is under Diagnostics. All installer and custom
-operations require **Installer Access** on and fresh stove readings. Access is
-off after every reboot.
-
-Restrict serial parameter addresses under `duepi:` for your controller:
-
-```yaml
-duepi:
-  installer_parameter_min: 1
-  installer_parameter_max: 28
-```
-
-The inclusive bounds default to 0..255; both examples use 1..28. The parameter
-selector follows these limits, while values to write remain 0..255. Out-of-range
-reads and writes are rejected inside the ESP before transmission, including API,
-automation, standby and raw `L`/`S` parameter commands. A configured standby address
-must be within the range. This restricts addresses, not safe values or unknown
-custom-command effects; menu PR numbers are not automatically serial addresses.
-Rebuild and install after changing the bounds.
-
-### Read or Write a Parameter
-
-1. Turn on **Installer Access**.
-2. Enter the documented serial address within the configured range in
-	**Installer Input: Parameter Number**, then press **Installer Operation: Read**.
-	The raw value appears in **Installer Result**.
-3. To change it, first record the original value. Prefer a stopped stove;
-	**never change parameters during ignition**. The component blocks ignition,
-	unknown phases and stale/unsynchronized readings, but permits other known phases.
-	Enter the raw value (0..255) in **Installer Input: Value to Write**, then press
-	**Installer Operation: Write**.
-4. Check **Installer Result** for the readback outcome. Wait for each operation
-	to finish before starting another; stop on failure or timeout.
-5. Turn off **Installer Access** when finished.
-
-Changing an input alone sends nothing. The value input starts at zero, which is
-not a reading or recommended setting. Printed PR numbers are not verified serial
-addresses; use controller-specific documentation for addresses, units and ranges.
-
-**Manufacturer guidance for parameter changes:**
-
-- Never change parameters during startup: heated, unignited pellets can release
-	gas that later ignites and causes overpressure in the combustion chamber.
-- Decide which program settings to change before entering programming mode.
-- Prefer making changes when the stove is not burning.
-- If changing settings while burning, keep time in programming mode as short as possible.
-
-These precautions do not establish that every live serial write is safe or that
-serial access has the same effects as the panel's programming menu. The phase
-guard uses polling, so it cannot detect physical phase changes instantaneously.
-
-A matching readback confirms only the returned byte, not that the setting is
-appropriate. Failed readback leaves the write unverified; writes are not retried
-automatically. Turning access off cannot undo an already transmitted write and
-cancels pending installer work, including readback.
-
-### Automation and Custom Commands
-
-| YAML action | Fields besides `id: stove` | Additional requirement |
-| --- | --- | --- |
-| `duepi.installer_read` | `parameter` integer 0..255 | None |
-| `duepi.installer_write` | `parameter`, `value` integers 0..255 | Known phase outside ignition |
-| `duepi.send_command` | `command` four hex characters | None |
-| `duepi.send_raw` | `command` six uppercase alphanumeric characters | None |
-
-Fields support ESPHome lambdas. With `api:` configured and hub `id: stove`, the
-native API actions are `stove_installer_read(parameter)`,
-`stove_installer_write(parameter,value)`, `stove_send_command(command)` and
-`stove_send_raw(payload)`. Home Assistant prefixes these with the node name.
-
-The hub adds framing and checksum to custom commands. **Custom commands bypass
-normal firmware, alarm and command-specific checks.** Ordinary-shutdown and
-pending-Off protections still apply. Raw installer-write payloads beginning with
-`S` also retain the ignition/known-phase guard.
-Restrict API access: these interfaces are not limited to safe reads.
-
-**Custom Response Data** shows `Pending`, a hexadecimal reply, or `Unavailable`
-on rejection, cancellation or timeout. A reply does not verify physical operation.
-See [State and Authorization](docs/ARCHITECTURE.md#state-and-authorization) for
-internal authorization and recovery behavior.
-
-## Logging
-
-All component messages use the `duepi` tag. The example defaults to `INFO`, with
-serial logging disabled (`baud_rate: 0`) so logs cannot corrupt the stove UART.
-Use ESPHome's network logs for the device.
-
-Detected firmware is logged at `INFO`, for example `Controller firmware: A060`,
-on first observation and whenever it changes, not on every poll. It is also
-available through the **Controller Firmware** text sensor in the example.
-
-- `INFO`: startup settings, controller identity, phase/alarm changes, communication
-	restored, operator write outcomes and configuration changes. Routine successful
-	polling is quiet. An ACK is explicitly unverified until supported readback succeeds.
-- `WARN`: communication health lost, exhausted read attempts, rejected or
-	indeterminate writes, reported alarms, installer readback mismatches and failed
-	preference saves. Repeated read-timeout and identical rejection warnings are rate-limited.
-- `DEBUG`: named transactions and tokens, arguments/parameter addresses, queue
-	outcomes, gate details, unavailable target feedback, read retries, initialization
-	and quiet recovery, plus summarized parser errors.
-- `VERBOSE`: bounded transmitted-frame contents and accepted response payloads.
-	Installer/custom data may appear in diagnostic logs; review before sharing.
-
-To enable debugging, change the logger level and rebuild:
-
-```yaml
-logger:
-  baud_rate: 0
-  level: DEBUG
-```
-
-Use `VERBOSE` temporarily for frame diagnostics. In a custom configuration set
-`logger.level` directly. The global level is a compile-time ceiling: setting only
-`logger.logs.duepi: DEBUG` while global is `INFO` cannot recover omitted messages.
-Raise the global level first, then lower noisy tags in `logger.logs` as needed.
-Detailed startup configuration also requires `DEBUG` or above in the pinned
-ESPHome version. Logging is not a durable audit record or proof of physical action.
+| [Hardware](docs/HARDWARE.md) | Connector pinouts, wiring, electrical precautions and board references |
+| [ESPHome configuration](docs/CONFIGURATION.md) | Current options/defaults, entities, controls, standby, installer usage, automation and logging |
+| [Stove parameters](docs/PARAMETERS.md) | Model-specific parameter values and conversions, starting with the Artel Next Petit 6 |
+| [Operating behavior](docs/BEHAVIOR.md) | Power/temperature behavior, phase permissions, freshness and command outcomes |
+| [Protocol](docs/PROTOCOL.md) | Frames, commands, replies and telemetry decoding |
+| [Architecture](docs/ARCHITECTURE.md) | Internal design, authorization, queue/recovery and development tooling |
 
 ## Development
 
-The examples load published code from GitHub `main`. To use unpublished workspace
-changes, point `external_components` at the local `components` directory instead.
-`refresh: 0s` refreshes the remote source; it does not publish local edits.
-
-Use Python 3.13 and the pinned development dependencies. Configure pip to use
-your required package index before installing. For example, on Windows:
-
-```text
-py -3.13 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.venv\Scripts\python.exe tests/run_host_tests.py
-.venv\Scripts\python.exe tests/test_config.py
-.venv\Scripts\python.exe tests/validate_examples.py config
-.venv\Scripts\python.exe tests/validate_examples.py compile
-```
-
-On Linux or macOS, create the environment with `python3.13 -m venv .venv` and
-use `.venv/bin/python` in place of `.venv\Scripts\python.exe`.
-
-Validation binaries use public dummy credentials and must not be deployed.
-See [development details](docs/ARCHITECTURE.md#development) for build variants,
-validation tooling and CI requirements.
+Use Python 3.13 and [the pinned dependencies](requirements-dev.txt). See
+[development details](docs/ARCHITECTURE.md#development) for test commands, build
+variants and CI requirements, and [device setup](docs/CONFIGURATION.md#device-setup)
+for loading unpublished local components. Validation binaries use public dummy
+credentials and must not be deployed.
 
 ## Todo
 
@@ -493,10 +126,6 @@ In priority order:
 
 - [ ] Fix remote power-level changes not applying; compare panel and remote changes
     against selected power level
-- [x] Restore installer parameter reads and writes; user confirmed reads and a
-	write to raw serial address 28 from 0 to 1 on their stove. Plus read of other parameters
-- [ ] Investigate the TXB0104 logic-level shifter blocking UART signals; evaluate
-	a [TXU0202](https://www.ti.com/product/TXU0202) as an alternative for 5 V/3.3 V UART.
 - [ ] Complete the protocol reference with full alarm and phase tables,
 	numeric-code explanations, known but unimplemented reads and newer-app findings.
 - [ ] Verify alarm and input meanings for identified controllers and firmware,
@@ -507,6 +136,8 @@ In priority order:
 	ranges and firmware applicability; neither analyzed app provides a catalogue.
 - [ ] Record verified controller capabilities, including supported reads and
 	demonstrated firmware differences.
+- [ ] Investigate the TXB0104 logic-level shifter blocking UART signals; evaluate
+	a [TXU0202](https://www.ti.com/product/TXU0202) as an alternative for 5 V/3.3 V UART.
 
 Lower priority:
 
@@ -514,6 +145,7 @@ Lower priority:
 	resume behavior before considering equivalent functionality.
 - [ ] Add support for an external temperature sensor to replace the inaccurate
 	internal room temperature sensor.
+- [ ] Add a timer option to turn the stove on and off at scheduled times.
 
 ## Thanks
 

@@ -420,6 +420,39 @@ void power_feedback_tests() {
   std::cout << "PASS: C500-only selection, Off rejection, reported-level startup, ignition writes, match/mismatch/unavailable/expiry, optional polling and legacy overrides\n";
 }
 
+void quiet_read_tests() {
+  test_now = 0;
+  TestHub hub;
+  text_sensor::TextSensor status;
+  text_sensor::TextSensor last_response;
+  sensor::Sensor target;
+  binary_sensor::BinarySensor communication;
+  hub.set_text_sensor(4, &status);
+  hub.set_text_sensor(7, &last_response);
+  hub.set_numeric_sensor(8, &target);
+  hub.set_communication_sensor(&communication);
+  hub.setup();
+  const std::string initial_status = status.state;
+  hub.synchronize();
+  CHECK(communication.state);
+  CHECK(status.state == initial_status);
+  CHECK(last_response.state == "0d 00h 00m 00s");
+  hub.report({Command::TARGET}, Outcome::TIMED_OUT);
+  CHECK(status.state == "Read " + std::to_string(unsigned(Command::TARGET)) + ": timed out");
+  const std::string timeout_status = status.state;
+  test_now = 44000;
+  hub.synchronize();
+  hub.observe(Command::TARGET, 0x001500);
+  test_now = 45001;
+  hub.publish();
+  CHECK(communication.state);
+  CHECK(target.state == 21);
+  CHECK(last_response.state == "0d 00h 00m 44s");
+  CHECK(status.state == timeout_status);
+  test_now = 0;
+  std::cout << "PASS: successful reads preserve transaction status, refresh telemetry and optional response uptime; timeouts remain visible\n";
+}
+
 void normal_tests() {
   TestHub hub;
   DuepiClimate climate;
@@ -1872,6 +1905,7 @@ int main() {
   power_feedback_tests();
   shutdown_tests();
   deferred_off_tests();
+  quiet_read_tests();
   normal_tests();
   target_feedback_tests();
 #ifdef USE_DUEPI_INSTALLER

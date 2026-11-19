@@ -1,0 +1,158 @@
+  alias: Duepi - Scan Raw Parameters
+  description: Read installer parameters sequentially within 1-28, stopping on failure. Reports raw decimal bytes; does not change stove settings or query correction readings.
+  mode: single
+  fields:
+    start_parameter:
+      name: First Parameter Number
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 28
+          step: 1
+          mode: box
+    end_parameter:
+      name: Last Parameter Number
+      default: 28
+      selector:
+        number:
+          min: 1
+          max: 28
+          step: 1
+          mode: box
+    snapshot_name:
+      name: Snapshot Name
+      default: baseline
+      selector:
+        text:
+    installer_access:
+      name: Installer Access
+      required: true
+      selector:
+        entity:
+          domain: switch
+    installer_parameter:
+      name: Installer Parameter Number
+      required: true
+      selector:
+        entity:
+          domain: number
+    installer_read:
+      name: Read Installer Parameter
+      required: true
+      selector:
+        entity:
+          domain: button
+    installer_result:
+      name: Installer Result
+      required: true
+      selector:
+        entity:
+          domain: sensor
+  sequence:
+    - variables:
+        first_address: "{{ start_parameter | default(1) | int(-1) }}"
+        last_address: "{{ end_parameter | default(28) | int(-1) }}"
+        scan_name: "{{ snapshot_name | default('baseline') }}"
+    - if:
+        - condition: template
+          value_template: >-
+            {{ not (1 <= first_address <= last_address <= 28)
+               or start_parameter | default(1) | float(-1) != first_address
+               or end_parameter | default(28) | float(-1) != last_address }}
+      then:
+        - stop: >-
+            Parameter numbers must be whole numbers from 1 to 28,
+            first no greater than last.
+          error: true
+    - if:
+        - condition: template
+          value_template: "{{ not is_state(installer_access, 'on') }}"
+      then:
+        - stop: Enable Installer Access before starting the read script.
+          error: true
+    - variables:
+        parameter: "{{ first_address }}"
+        results: []
+        failure: ""
+    - repeat:
+        while:
+          - condition: template
+            value_template: "{{ parameter <= last_address and failure == '' }}"
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ not is_state(installer_access, 'on') }}"
+            then:
+              - variables:
+                  failure: "Installer Access was disabled before address {{ parameter }}."
+            else:
+              - action: number.set_value
+                continue_on_error: true
+                target:
+                  entity_id: "{{ installer_parameter }}"
+                data:
+                  value: "{{ parameter }}"
+              - wait_template: >-
+                  {{ states(installer_parameter) | int(-1) == parameter }}
+                timeout: "00:00:05"
+                continue_on_timeout: true
+              - if:
+                  - condition: template
+                    value_template: "{{ not wait.completed }}"
+                then:
+                  - variables:
+                      failure: "Could not select address {{ parameter }}; no read sent."
+                else:
+                  - variables:
+                      read_started: "{{ now().isoformat() }}"
+                  - action: button.press
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ installer_read }}"
+                  - wait_template: >-
+                      {% set result = states(installer_result) %}
+                      {{ as_timestamp(states[installer_result].last_updated)
+                           > as_timestamp(read_started)
+                         and result not in
+                           ['PR%d: queued' | format(parameter),
+                            'PR%d: sent' | format(parameter)] }}
+                    timeout: "00:00:20"
+                    continue_on_timeout: true
+                  - variables:
+                      result: "{{ states(installer_result) }}"
+                  - if:
+                      - condition: template
+                        value_template: >-
+                          {{ wait.completed and result is match(
+                            '^PR%d read value [0-9]+$' | format(parameter)) }}
+                    then:
+                      - variables:
+                          results: "{{ results + [result] }}"
+                    else:
+                      - variables:
+                          failure: >-
+                            Address {{ parameter }}:
+                            {{ result if wait.completed else 'No fresh result within 20 seconds; stopped.' }}
+          - variables:
+              parameter: "{{ parameter + 1 }}"
+          - delay: "00:00:01"
+    - variables:
+        summary: |-
+          DUEPI_SCAN {{ scan_name }}: parameter numbers {{ first_address }}-{{ last_address }}.
+          Read {{ results | count }} of {{ last_address - first_address + 1 }} parameters.
+          Values are raw decimal bytes; stove-menu values may use different scaling.
+
+          {{ results | join('\n') }}
+
+          {{ failure if failure else 'All reads completed.' }}
+    - action: system_log.write
+      data:
+        level: info
+        logger: duepi.parameter_scan
+        message: "{{ summary }}"
+    - action: persistent_notification.create
+      data:
+        title: "Duepi Parameter Scan - {{ scan_name }}"
+        notification_id: duepi_parameter_read_results
+        message: "{{ summary }}"
