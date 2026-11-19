@@ -7,7 +7,7 @@
 namespace esphome {
 namespace duepi {
 
-constexpr size_t FIELD_COUNT = 21;
+constexpr size_t FIELD_COUNT = 20;
 
 struct ObservedField {
   uint32_t data{0};
@@ -55,8 +55,7 @@ class ObservedState {
 };
 
 inline float numeric_value(Command command, uint32_t data) {
-  if (command == Command::TOTAL_RUNTIME || command == Command::SERVICE_RUNTIME ||
-      command == Command::EXHAUST_FAN_CORRECTION_D500) return static_cast<float>(data);
+  if (command == Command::TOTAL_RUNTIME || command == Command::SERVICE_RUNTIME) return static_cast<float>(data);
   if (command == Command::BOARD || command == Command::FLUE_MOTOR_CORRECTION || command == Command::PELLET_CORRECTION)
     return static_cast<float>(data >> 16);
   float value = static_cast<float>(data >> 8);

@@ -348,10 +348,26 @@ Assistant; Installer Result is under Diagnostics. All installer and custom
 operations require **Installer Access** on and fresh stove readings. Access is
 off after every reboot.
 
+Restrict serial parameter addresses under `duepi:` for your controller:
+
+```yaml
+duepi:
+  installer_parameter_min: 1
+  installer_parameter_max: 28
+```
+
+The inclusive bounds default to 0..255; both examples use 1..28. The parameter
+selector follows these limits, while values to write remain 0..255. Out-of-range
+reads and writes are rejected inside the ESP before transmission, including API,
+automation, standby and raw `L`/`S` parameter commands. A configured standby address
+must be within the range. This restricts addresses, not safe values or unknown
+custom-command effects; menu PR numbers are not automatically serial addresses.
+Rebuild and install after changing the bounds.
+
 ### Read or Write a Parameter
 
 1. Turn on **Installer Access**.
-2. Enter the documented serial address (0..255) in
+2. Enter the documented serial address within the configured range in
 	**Installer Input: Parameter Number**, then press **Installer Operation: Read**.
 	The raw value appears in **Installer Result**.
 3. To change it, first record the original value. Prefer a stopped stove;

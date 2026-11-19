@@ -40,6 +40,33 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(cv.Invalid):
             duepi.CONFIG_SCHEMA([{"id": "stove"}, {"id": "second_stove"}])
 
+    def test_installer_parameter_range(self):
+        config = self.config()
+        self.assertEqual(config["installer_parameter_min"], 0)
+        self.assertEqual(config["installer_parameter_max"], 255)
+        for minimum, maximum in ((1, 28), (0, 0), (255, 255)):
+            CORE.reset()
+            config = self.config(installer_parameter_min=minimum, installer_parameter_max=maximum)
+            self.assertEqual(config["installer_parameter_min"], minimum)
+            self.assertEqual(config["installer_parameter_max"], maximum)
+        for overrides in (
+            {"installer_parameter_min": -1}, {"installer_parameter_max": 256},
+            {"installer_parameter_min": 1.5}, {"installer_parameter_max": 28.5},
+            {"installer_parameter_min": 29, "installer_parameter_max": 28},
+        ):
+            CORE.reset()
+            with self.assertRaises(cv.Invalid):
+                self.config(**overrides)
+        for parameter in (0, 1, 28, 29):
+            CORE.reset()
+            settings = {"installer_parameter_min": 1, "installer_parameter_max": 28,
+                        "standby_mode": {"parameter": parameter}}
+            if 1 <= parameter <= 28:
+                self.assertEqual(self.config(**settings)["standby_mode"]["parameter"], parameter)
+            else:
+                with self.assertRaises(cv.Invalid):
+                    self.config(**settings)
+
     def test_standby_configuration(self):
         config = self.config(standby_mode={"parameter": 28})
         self.assertFalse(config["enable_installer"])
@@ -75,7 +102,6 @@ class ConfigTests(unittest.TestCase):
             "extraction_sensor_level": 16,
             "flue_motor_correction": 17,
             "pellet_correction": 18,
-            "exhaust_fan_correction_d500": 20,
         }
         config = sensors.CONFIG_SCHEMA({
             "duepi_id": "stove",

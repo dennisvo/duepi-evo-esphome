@@ -16,8 +16,9 @@ void DuepiStandbySwitch::write_state(bool value) {
 }
 
 bool DuepiHub::request_standby(bool value) {
-  if (this->standby_switch_ == nullptr || !this->installer_write_ready_() || this->installer_verifying_) {
-    this->reject_control("Standby change rejected: not configured, busy, stale, unknown phase or ignition");
+  if (this->standby_switch_ == nullptr || !this->installer_parameter_allowed_(this->standby_parameter_) ||
+      !this->installer_write_ready_() || this->installer_verifying_) {
+    this->reject_control("Standby change rejected: not configured, parameter range, busy, stale, unknown phase or ignition");
     return false;
   }
   Request request{Command::INSTALLER_WRITE};
@@ -108,6 +109,21 @@ bool DuepiHub::installer_write_ready_() const {
   return this->privileged_ready_() && known_phase(phase) && (phase >> 8) != 1;
 }
 
+bool DuepiHub::installer_request_allowed_(const Request &request) const {
+  if (request.command == Command::INSTALLER_READ || request.command == Command::INSTALLER_WRITE)
+    return this->installer_parameter_allowed_(request.parameter);
+  if (request.command != Command::CUSTOM || (request.payload[0] != 'L' && request.payload[0] != 'S')) return true;
+  int parameter = 0;
+  for (size_t index = 1; index <= 2; ++index) {
+    char character = request.payload[index];
+    int digit = character >= '0' && character <= '9' ? character - '0' :
+                character >= 'A' && character <= 'F' ? character - 'A' + 10 : -1;
+    if (digit < 0) return false;
+    parameter = parameter * 16 + digit;
+  }
+  return this->installer_parameter_allowed_(parameter);
+}
+
 bool DuepiHub::arm_installer_write() {
   bool armed = this->installer_write_ready_() &&
                this->installer_permission_.arm(millis());
@@ -131,7 +147,7 @@ bool DuepiHub::arm_custom_command() {
 }
 
 bool DuepiHub::installer_read(int parameter) {
-  if (parameter < 0 || parameter > 255 || !this->installer_permission_.enabled() ||
+  if (!this->installer_parameter_allowed_(parameter) || !this->installer_permission_.enabled() ||
       !this->privileged_ready_() || this->installer_verifying_) {
     const char *reason = "Installer read rejected: range, disabled, busy or stale";
     if (this->text_[5] != nullptr) this->text_[5]->publish_state(reason);
@@ -145,7 +161,7 @@ bool DuepiHub::installer_read(int parameter) {
 }
 
 bool DuepiHub::installer_write(int parameter, int value) {
-  if (parameter < 0 || parameter > 255 || value < 0 || value > 255 || !this->installer_write_ready_() ||
+  if (!this->installer_parameter_allowed_(parameter) || value < 0 || value > 255 || !this->installer_write_ready_() ||
       this->installer_verifying_) {
     const char *reason = "Installer write rejected: range, busy, stale, unknown phase or ignition";
     if (this->text_[5] != nullptr) this->text_[5]->publish_state(reason);
@@ -167,10 +183,11 @@ bool DuepiHub::installer_write(int parameter, int value) {
 
 bool DuepiHub::send_custom(const std::string &command, bool raw) {
   Request request;
-  if (!custom_request(command, raw, request) || (raw && !this->raw_enabled_) ||
+  if (!custom_request(command, raw, request) || !this->installer_request_allowed_(request) ||
+      (raw && !this->raw_enabled_) ||
       this->write_blocked_(Command::CUSTOM) || !this->privileged_ready_() || this->installer_verifying_ ||
       (request.payload[0] == 'S' && !this->installer_write_ready_())) {
-    this->reject_control("Custom command rejected: format, disabled, busy, stale, shutdown or OFF pending");
+    this->reject_control("Custom command rejected: format, parameter range, disabled, busy, stale, shutdown or OFF pending");
     return false;
   }
   request.token = ++this->token_;

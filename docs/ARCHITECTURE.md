@@ -176,7 +176,9 @@ buttons, API actions and YAML actions use these shared request entry points.
 No arming button or YAML action is exposed. Disabling Installer Access clears both permissions
 and cancels only queued advanced work, including initialization-held requests and
 pending advanced retries. An already transmitted request is not undone.
-Installer byte bounds and known non-ignition phase are rechecked. This policy
+Configured installer address bounds apply at submission and transmission to
+reads, writes, standby and raw `L`/`S` parameter commands. Values remain bytes.
+Installer address bounds and known non-ignition phase are rechecked. This policy
 permits typed parameter writes in heating, cleaning, eco and ordinary shutdown;
 all freshness, synchronization and one-shot requirements remain in force.
 Custom access intentionally bypasses the semantic policy but still requires

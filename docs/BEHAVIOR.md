@@ -216,6 +216,17 @@ Sources: [transaction handling](../components/duepi/transaction.cpp),
 
 ## Installer Parameters
 
+`installer_parameter_min` and `installer_parameter_max` configure the inclusive
+serial address range (defaults 0..255; both examples use 1..28). Reads and writes
+outside it are rejected locally without UART transmission, including UI, API,
+automation, standby and raw `L`/`S` parameter operations. Checks run at submission
+and actual transmission. Standby configuration outside the range is invalid.
+The parameter selector uses these bounds; values to write still accept 0..255.
+The bounds do not establish safe values or constrain unknown custom commands.
+
+Reads require Installer Access, fresh synchronized prerequisites and no active
+parameter verification. They do not have the write-specific ignition guard.
+
 Parameter writes accept byte addresses and values (0..255) in every known phase
 except ignition (`01xx`), including heating, eco, cleaning and shutdown. Fresh
 synchronized phase, room, alarm, firmware and board readings and an idle parameter

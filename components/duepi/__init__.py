@@ -38,6 +38,12 @@ TIMINGS = {
 def validate_timings(config):
     if config["min_temperature"] >= config["max_temperature"]:
         raise cv.Invalid("min_temperature must be less than max_temperature")
+    if config["installer_parameter_min"] > config["installer_parameter_max"]:
+        raise cv.Invalid("installer_parameter_min must not exceed installer_parameter_max")
+    if "standby_mode" in config and not (
+        config["installer_parameter_min"] <= config["standby_mode"]["parameter"] <= config["installer_parameter_max"]
+    ):
+        raise cv.Invalid("standby_mode.parameter must be within the configured installer parameter range")
     if config["stale_after"] <= config["update_interval"]:
         raise cv.Invalid("stale_after must exceed update_interval")
     if config["enable_installer"]:
@@ -58,6 +64,8 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional("max_temperature", default=25): cv.int_range(min=10, max=35),
             cv.Optional("firmware_profile", default="auto"): cv.enum(PROFILES),
             cv.Optional("enable_installer", default=False): cv.boolean,
+            cv.Optional("installer_parameter_min", default=0): cv.int_range(min=0, max=255),
+            cv.Optional("installer_parameter_max", default=255): cv.int_range(min=0, max=255),
             cv.Optional("standby_mode"): STANDBY_SCHEMA,
             cv.Optional("enable_custom_commands"): cv.invalid("Use enable_installer to include all advanced capabilities"),
             cv.Optional("enable_raw_commands"): cv.invalid("Use enable_installer to include all advanced capabilities"),
@@ -93,6 +101,7 @@ async def to_code(config):
     cg.add(hub.set_firmware_profile(config["firmware_profile"]))
     if config["enable_installer"] or "standby_mode" in config:
         cg.add_define("USE_DUEPI_INSTALLER")
+        cg.add(hub.set_installer_parameter_range(config["installer_parameter_min"], config["installer_parameter_max"]))
     if "standby_mode" in config:
         standby = await esphome_switch.new_switch(config["standby_mode"])
         cg.add(standby.set_parent(hub))
@@ -103,7 +112,10 @@ async def to_code(config):
         cg.add(hub.set_enable_installer(True))
         cg.add(hub.set_enable_custom_commands(True))
         cg.add(hub.set_enable_raw_commands(True))
-        await installer_to_code(config["_installer_entities"], hub, str(config[CONF_ID]))
+        await installer_to_code(
+            config["_installer_entities"], hub, str(config[CONF_ID]),
+            config["installer_parameter_min"], config["installer_parameter_max"],
+        )
     for key in TIMINGS:
         if key == "arming_timeout" and not config["enable_installer"] and "standby_mode" not in config:
             continue

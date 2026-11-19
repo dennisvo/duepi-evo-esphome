@@ -1736,20 +1736,76 @@ void deferred_off_tests() {
   std::cout << "PASS: queued OFF survives ignition ACK, permits prerequisite polling, expires and cancels on recovery\n";
 }
 
+#ifdef USE_DUEPI_INSTALLER
+void installer_parameter_range_tests() {
+  for (int parameter : {0, 1, 28, 29, 255}) {
+    for (unsigned operation : {0U, 1U, 2U, 3U, 4U}) {
+      test_now = 0;
+      TestHub hub;
+      TestStandbySwitch standby;
+      hub.set_enable_installer(true);
+      hub.set_enable_custom_commands(true);
+      hub.set_enable_raw_commands(true);
+      hub.set_installer_parameter_range(1, 28);
+      hub.set_standby_mode(&standby, parameter);
+      hub.setup();
+      hub.synchronize();
+      CHECK(hub.set_installer_access(true));
+      bool accepted = false;
+      if (operation == 0) accepted = hub.installer_read(parameter);
+      if (operation == 1) accepted = hub.request_installer_write(parameter, 255);
+      if (operation == 2 || operation == 3) {
+        const char *hex = "0123456789ABCDEF";
+        char payload[] = {operation == 2 ? 'L' : 'S', hex[parameter >> 4], hex[parameter & 15],
+                          operation == 2 ? '0' : 'F', operation == 2 ? '0' : 'F', '0', 0};
+        accepted = hub.request_custom(payload, true);
+      }
+      if (operation == 4) accepted = hub.request_standby(true);
+      bool allowed = parameter >= 1 && parameter <= 28;
+      CHECK(accepted == allowed);
+      CHECK(hub.queued() == (allowed ? 1U : 0U));
+      hub.tick();
+      CHECK(hub.writes.size() == (allowed ? 1U : 0U));
+    }
+  }
+  for (bool write : {false, true}) {
+    test_now = 0;
+    TestHub hub;
+    hub.set_enable_installer(true);
+    hub.set_installer_parameter_range(1, 28);
+    hub.setup();
+    hub.synchronize();
+    CHECK(hub.set_installer_access(true));
+    CHECK(write ? hub.request_installer_write(28, 255) : hub.installer_read(28));
+    hub.set_installer_parameter_range(1, 27);
+    hub.tick();
+    CHECK(hub.writes.empty());
+  }
+  test_now = 0;
+  TestHub hub;
+  TestInstallerValue parameter;
+  TestInstallerValue value;
+  hub.set_installer_parameter_range(10, 20);
+  hub.set_installer_number(false, &parameter);
+  hub.set_installer_number(true, &value);
+  hub.setup();
+  CHECK(parameter.state == 10);
+  CHECK(value.state == 0);
+  std::cout << "PASS: installer parameter bounds cover reads, writes, raw commands, standby, boot and send-time checks\n";
+}
+#endif
+
 void optional_diagnostic_tests() {
-  for (unsigned mode : {0U, 1U, 2U, 3U, 4U}) {
+  for (unsigned mode : {0U, 1U, 2U, 3U}) {
     test_now = 0;
     TestHub hub;
     sensor::Sensor readings[4];
-    sensor::Sensor d500;
     text_sensor::TextSensor cycle;
     for (size_t index = 0; index < 4; ++index) {
       if (mode == 3 || (mode == 1 && index == 0))
         hub.set_numeric_sensor(static_cast<size_t>(Command::FLUE_EXTRACTION_SPEED) + index, &readings[index]);
     }
     if (mode == 2 || mode == 3) hub.set_text_sensor(9, &cycle);
-    if (mode == 3 || mode == 4)
-      hub.set_numeric_sensor(static_cast<size_t>(Command::EXHAUST_FAN_CORRECTION_D500), &d500);
     hub.setup();
     std::vector<std::string> expected = {
         "RDC000", "RC4000", "RD9000", "RD1000", "RDA000", "RC5000", "RC6000",
@@ -1761,7 +1817,6 @@ void optional_diagnostic_tests() {
       expected.push_back("RDE000");
     }
     if (mode == 2 || mode == 3) expected.push_back("RD8000");
-    if (mode == 3 || mode == 4) expected.push_back("RD5000");
     expected.push_back("RED000");
     expected.push_back("REE000");
     for (unsigned pass : {0U, 1U}) {
@@ -1777,7 +1832,7 @@ void optional_diagnostic_tests() {
                             command == "RC5000" ? "000300" : command == "RC6000" ? "001500" :
                             command == "RD2000" ? "123400" : command == "RDB000" ? "020100" :
                             command == "RDD000" ? "FE3300" : command == "RDE000" ? "7F4400" :
-                            command == "RD8000" ? "0A0B00" : command == "RD5000" ? "1234AB" : "000000";
+                            command == "RD8000" ? "0A0B00" : "000000";
         hub.receive(reply);
         test_now += 100;
       }
@@ -1785,13 +1840,6 @@ void optional_diagnostic_tests() {
       CHECK(hub.writes.size() == before + count);
     }
     if (mode == 1 || mode == 3) CHECK(readings[0].state == 4660);
-    if (mode == 3 || mode == 4) {
-      CHECK(d500.state == 0x1234AB);
-      hub.observe(Command::EXHAUST_FAN_CORRECTION_D500, 0);
-      CHECK(d500.state == 0);
-      hub.observe(Command::EXHAUST_FAN_CORRECTION_D500, 0x000001);
-      CHECK(d500.state == 1);
-    }
     if (mode == 3) {
       CHECK(readings[1].state == 513);
       CHECK(readings[2].state == 254);
@@ -1810,13 +1858,15 @@ void optional_diagnostic_tests() {
     if (mode == 3)
       for (const auto &reading : readings) CHECK(std::isnan(reading.state));
     if (mode == 2 || mode == 3) CHECK(cycle.state == "Stale");
-    if (mode == 3 || mode == 4) CHECK(std::isnan(d500.state));
   }
   test_now = 0;
   std::cout << "PASS: optional diagnostic polling, byte/word decoding, cycle formatting, freshness and runtime ordering\n";
 }
 
 int main() {
+#ifdef USE_DUEPI_INSTALLER
+  installer_parameter_range_tests();
+#endif
   optional_diagnostic_tests();
   power_preset_tests();
   power_feedback_tests();

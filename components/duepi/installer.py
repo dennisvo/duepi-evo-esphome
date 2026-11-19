@@ -41,9 +41,12 @@ def entity_config(hub_id):
     return values
 
 
-async def to_code(config, hub, hub_id):
+async def to_code(config, hub, hub_id, parameter_min, parameter_max):
     for key in ("parameter", "value"):
-        entity = await number.new_number(config[key], min_value=0, max_value=255, step=1)
+        entity = await number.new_number(
+            config[key], min_value=parameter_min if key == "parameter" else 0,
+            max_value=parameter_max if key == "parameter" else 255, step=1,
+        )
         cg.add(hub.set_installer_number(key == "value", entity))
     access = await switch.new_switch(config["access"])
     cg.add(access.set_parent(hub))

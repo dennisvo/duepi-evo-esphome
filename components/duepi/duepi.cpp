@@ -18,7 +18,9 @@ void DuepiHub::setup() {
   this->installer_permission_.set_enabled(false);
   this->custom_permission_.set_enabled(false);
   for (size_t index = 0; index < this->installer_numbers_.size(); ++index)
-    if (this->installer_numbers_[index] != nullptr) this->installer_numbers_[index]->publish_state(index == 0 ? 1 : 0);
+    if (this->installer_numbers_[index] != nullptr)
+      this->installer_numbers_[index]->publish_state(index == 0 ?
+          (this->installer_parameter_allowed_(1) ? 1 : this->installer_parameter_min_) : 0);
 #endif
   for (auto *entity : this->temperature_limit_numbers_) {
     if (entity == nullptr) continue;
@@ -99,6 +101,12 @@ void DuepiHub::diagnostic(const Request &request, const char *message) {
 }
 
 bool DuepiHub::may_transmit(const Request &request, uint32_t now) {
+#ifdef USE_DUEPI_INSTALLER
+  if (!this->installer_request_allowed_(request)) {
+    this->diagnostic(request, "installer parameter outside configured range");
+    return false;
+  }
+#endif
   if (this->write_blocked_(request.command)) {
     this->diagnostic(request, "write blocked: ordinary shutdown active or OFF pending");
     return false;
@@ -248,9 +256,10 @@ void DuepiHub::result(const Request &request, Outcome outcome, const Response *r
   static const char *const OUTCOMES[] = {"queued", "sent", "acknowledged, unverified", "rejected",
                                         "timed out", "indeterminate: not retried", "cancelled", "verified by readback"};
   const char *description = OUTCOMES[static_cast<size_t>(outcome)];
-  if (outcome == Outcome::ACKNOWLEDGED && response != nullptr)
+  if (outcome == Outcome::ACKNOWLEDGED && response != nullptr) {
     ESP_LOGV(TAG, "RX %s #%lu: accepted payload=%06lX", command_name(request.command),
              static_cast<unsigned long>(request.token), static_cast<unsigned long>(response->data));
+  }
   ESP_LOGD(TAG, "%s #%lu: %s (argument=%u, parameter=%u)", command_name(request.command),
            static_cast<unsigned long>(request.token), description, unsigned(request.argument), unsigned(request.parameter));
   if (is_write(request.command)) {
@@ -444,7 +453,6 @@ void DuepiHub::schedule_(uint32_t now) {
       Command::INPUTS, Command::PCB,
       Command::FLUE_EXTRACTION_SPEED, Command::EXTRACTION_SENSOR_LEVEL,
       Command::FLUE_MOTOR_CORRECTION, Command::PELLET_CORRECTION, Command::CYCLE_TIME,
-      Command::EXHAUST_FAN_CORRECTION_D500,
       Command::TOTAL_RUNTIME, Command::SERVICE_RUNTIME};
   if (!this->cycle_active_ && uint32_t(now - this->cycle_at_) >= this->update_interval_) {
     this->cycle_active_ = true;
@@ -457,7 +465,7 @@ void DuepiHub::schedule_(uint32_t now) {
   while (this->cursor_ < count) {
     Command command = ORDER[this->cursor_++];
     if (command == Command::REQUESTED_POWER && !this->read_power_level_) continue;
-    if (command >= Command::FLUE_EXTRACTION_SPEED && command <= Command::EXHAUST_FAN_CORRECTION_D500 &&
+    if (command >= Command::FLUE_EXTRACTION_SPEED && command <= Command::CYCLE_TIME &&
         (command == Command::CYCLE_TIME ? this->text_[9] == nullptr :
          this->numeric_[static_cast<size_t>(command)] == nullptr)) continue;
     this->engine_.enqueue({command}, now);
@@ -467,7 +475,8 @@ void DuepiHub::schedule_(uint32_t now) {
   if (this->runtime_due_) this->runtime_at_ = now;
   this->runtime_due_ = false;
 #ifdef USE_DUEPI_INSTALLER
-  if (this->standby_switch_ != nullptr && !this->installer_verifying_ && this->privileged_ready_()) {
+  if (this->standby_switch_ != nullptr && this->installer_parameter_allowed_(this->standby_parameter_) &&
+      !this->installer_verifying_ && this->privileged_ready_()) {
     Request request{Command::INSTALLER_READ};
     request.parameter = this->standby_parameter_;
     request.standby = true;

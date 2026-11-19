@@ -53,7 +53,6 @@ Bodies below use the normal `Rxxxx0` request format.
 | DB00 | Extraction Sensor Level | First four hex digits; raw value |
 | DD00 | Flue Motor Correction | First byte; raw value |
 | DE00 | Pellet Correction | First byte; raw value |
-| D500 | Exhaust Fan Correction D500 (experimental; meaning unconfirmed) | Full six-hex-digit numeric reply; no scaling or units |
 | D800 | Cycle Time | First two bytes formatted as decimal fields, e.g. 10:11 |
 | D400 | Auger Level | 0..5; ignition can report 6/7 |
 | C500 | Power | Selected level, 1..5 |
@@ -72,14 +71,9 @@ Climate presets follow **Power** (`C500`), not Auger Level or Fan Speed.
 These are levels, not measured heat output or pellet flow. Disable `C500`
 polling with `read_power_level: false` if unsupported.
 
-`D200`, `DB00`, `DD00`, `DE00`, `D500` and `D800` are polled only when their entities
+`D200`, `DB00`, `DD00`, `DE00` and `D800` are polled only when their entities
 are configured. They default to diagnostic. Correction values have no assigned
 unit or signed conversion; Cycle Time is not interpreted as minutes/seconds.
-
-`exhaust_fan_correction_d500` is an experimental probe, not a confirmed correction
-or cFAN mapping. It preserves all 24 numeric reply bits to avoid assuming a byte
-width. Zero is published as zero; missing replies use normal timeout/recovery
-handling, not a fabricated zero. Both examples enable this probe for investigation.
 
 Out-of-range `C500` or `C600` replies mark that reading unavailable without
 triggering transport recovery. Missing or malformed replies use normal timeouts.
@@ -152,6 +146,12 @@ Installer payloads replace the complete six-character payload; do not prefix R.
 | --- | --- | --- |
 | Read parameter | Lpp000 | pp = parameter byte in hex; reply uses first byte |
 | Write parameter | Sppvv0 | pp = parameter byte, vv = value byte, both hex |
+
+`installer_parameter_min` and `installer_parameter_max` restrict the inclusive
+address range before enqueue and transmission (defaults 0..255). They also apply
+to standby and raw `L`/`S` parameter payloads. Out-of-range operations send nothing
+to the stove. Values remain bytes (0..255); these bounds do not prove value safety
+or cover unknown custom-command effects.
 
 Installer writes require a zero-data ACK and matching readback for verification.
 They require a fresh known phase outside ignition (`01xx`), checked at enqueue

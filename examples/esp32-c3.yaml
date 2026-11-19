@@ -54,6 +54,8 @@ duepi:
   # true includes general installer/custom/raw tools; standby_mode is independent.
   # Installer Access starts off in Home Assistant.
   enable_installer: false
+  installer_parameter_min: 1
+  installer_parameter_max: 28
   firmware_profile: auto
   read_power_level: true
   min_temperature: 10
@@ -121,8 +123,6 @@ sensor:
     #   name: Flue Motor Correction
     # pellet_correction:
     #   name: Pellet Correction
-    exhaust_fan_correction_d500:
-      name: Exhaust Fan Correction D500
 
 text_sensor:
   - platform: duepi

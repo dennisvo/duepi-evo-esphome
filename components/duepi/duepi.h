@@ -58,6 +58,10 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   void set_enable_installer(bool value) { this->installer_permission_.configured = value; }
   void set_enable_custom_commands(bool value) { this->custom_permission_.configured = value; }
   void set_enable_raw_commands(bool value) { this->raw_enabled_ = value; }
+  void set_installer_parameter_range(uint8_t minimum, uint8_t maximum) {
+    this->installer_parameter_min_ = minimum;
+    this->installer_parameter_max_ = maximum;
+  }
   void set_arming_timeout(uint32_t value) {
     this->installer_permission_.lifetime = this->custom_permission_.lifetime = value;
     this->standby_permission_.lifetime = value;
@@ -95,6 +99,10 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   bool handle_privileged_result_(const Request &request, Outcome outcome, const Response *response);
   bool privileged_ready_() const;
   bool installer_write_ready_() const;
+  bool installer_parameter_allowed_(int parameter) const {
+    return parameter >= this->installer_parameter_min_ && parameter <= this->installer_parameter_max_;
+  }
+  bool installer_request_allowed_(const Request &request) const;
   void finish_installer_write_();
   void restart_observation_();
 #endif
@@ -140,6 +148,8 @@ class DuepiHub : public Component, public uart::UARTDevice, private TransactionI
   OneShotPermission standby_permission_;
   DuepiStandbySwitch *standby_switch_{nullptr};
   uint8_t standby_parameter_{0};
+  uint8_t installer_parameter_min_{0};
+  uint8_t installer_parameter_max_{255};
   bool raw_enabled_{false};
   bool installer_verifying_{false};
   Request installer_expected_{};
